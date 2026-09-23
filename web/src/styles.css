@@ -1,0 +1,26 @@
+@import "tailwindcss" source(none);
+@source "./";
+@import "@biyard/components/tokens.css";
+@import "@biyard/components/theme-bridge.css";
+@source "../../node_modules/@biyard/components/src";
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@layer base {
+  body {
+    @apply m-0 bg-background text-body-sm text-foreground antialiased;
+    font-family:
+      Inter,
+      "Pretendard",
+      -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      sans-serif;
+  }
+  button,
+  a,
+  select,
+  input,
+  textarea {
+    @apply focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
+  }
+}

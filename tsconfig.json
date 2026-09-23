@@ -1,0 +1,47 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "types": [
+      "vite/client",
+      "node"
+    ],
+    "paths": {
+      "@interview/plugin-sdk": [
+        "./plugin-sdk/index.ts"
+      ],
+      "@interview/plugin-sdk/*": [
+        "./plugin-sdk/*"
+      ],
+      "@interview/api-client/*": [
+        "./api-client/src/*"
+      ],
+      "@interview/api-types/*": [
+        "./api-client/src/types/*"
+      ]
+    }
+  },
+  "include": [
+    "web/src",
+    "playwright.config.ts",
+    "tests",
+    "vite.config.ts",
+    "plugins",
+    "plugin-sdk",
+    "shared",
+    "api-client"
+  ]
+}

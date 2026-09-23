@@ -1,0 +1,7 @@
+FROM rust:1.96-bookworm AS watch-build
+
+RUN cargo install cargo-watch --locked --version 8.5.3 --root /watch
+
+FROM rust:1.96-bookworm
+
+COPY --from=watch-build /watch/bin/cargo-watch /usr/local/bin/cargo-watch

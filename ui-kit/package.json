@@ -1,0 +1,19 @@
+{
+  "name": "@biyard/components",
+  "version": "0.0.0-assignment",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./utils": "./src/lib/utils.ts",
+    "./tokens.css": "./tokens.css",
+    "./theme-bridge.css": "./theme-bridge.css"
+  },
+  "peerDependencies": {
+    "@radix-ui/react-slot": "^1",
+    "class-variance-authority": "^0.7",
+    "clsx": "^2",
+    "react": "^18",
+    "tailwind-merge": "^2"
+  }
+}

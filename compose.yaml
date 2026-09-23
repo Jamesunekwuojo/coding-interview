@@ -1,0 +1,127 @@
+name: dataroom-interview
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dataroom_interview
+      POSTGRES_PASSWORD: dataroom_interview
+      POSTGRES_DB: dataroom_interview
+    ports:
+      - "127.0.0.1:${DB_PORT:-5548}:5432"
+    volumes:
+      - platform-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dataroom_interview -d dataroom_interview"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: dataroom-interview-api:dev
+    init: true
+    working_dir: /app
+    command:
+      - cargo
+      - watch
+      - --poll
+      - -C
+      - api
+      - -w
+      - src
+      - -w
+      - migrations
+      - -w
+      - Cargo.toml
+      - -w
+      - ../plugins/review/server
+      - -x
+      - run --locked --bin dataroom-api
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: 4318
+      DATABASE_URL: postgres://dataroom_interview:dataroom_interview@db:5432/dataroom_interview
+      SESSION_SIGNING_KEY: dataroom-interview-local-session-signing-key-change-this-before-deployment
+      CARGO_TARGET_DIR: /target
+    volumes:
+      - ./api:/app/api:ro
+      - ./plugins:/app/plugins:ro
+      - ./scripts:/app/scripts:ro
+      - api-target:/target
+      - cargo-cache:/usr/local/cargo/registry
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:4318/api/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 200
+  web:
+    image: node:22.23.1-alpine
+    working_dir: /app
+    entrypoint: ["sh", "/source/scripts/web-container.sh"]
+    command: ["pnpm", "dev:web"]
+    environment:
+      VITE_API_TARGET: http://api:4318
+      COREPACK_HOME: /pnpm/store/corepack
+    volumes:
+      - .:/source:ro
+      - web-workspace:/app
+      - ./web:/app/web:ro
+      - ./plugins:/app/plugins:ro
+      - ./plugin-sdk:/app/plugin-sdk:ro
+      - ./shared:/app/shared:ro
+      - ./api-client:/app/api-client:ro
+      - ./ui-kit:/app/ui-kit:ro
+      - ./scripts:/app/scripts:ro
+      - pnpm-store:/pnpm/store
+    ports:
+      - "127.0.0.1:${WEB_PORT:-5178}:5178"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:5178/api/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 100
+  playwright:
+    profiles: [test]
+    build:
+      context: .
+      dockerfile: Dockerfile.playwright
+    image: dataroom-interview-playwright:dev
+    init: true
+    working_dir: /app
+    entrypoint: ["sh", "/source/scripts/web-container.sh"]
+    command: ["pnpm", "test:e2e"]
+    environment:
+      PLAYWRIGHT_BASE_URL: http://web:5178
+      COREPACK_HOME: /pnpm/store/corepack
+    volumes:
+      - .:/source:ro
+      - playwright-workspace:/app
+      - ./playwright.config.ts:/app/playwright.config.ts:ro
+      - ./tests:/app/tests:ro
+      - ./web:/app/web:ro
+      - ./plugins:/app/plugins:ro
+      - ./plugin-sdk:/app/plugin-sdk:ro
+      - ./shared:/app/shared:ro
+      - ./api-client:/app/api-client:ro
+      - ./ui-kit:/app/ui-kit:ro
+      - ./scripts:/app/scripts:ro
+      - ./test-results:/app/test-results
+      - pnpm-store:/pnpm/store
+    depends_on:
+      web:
+        condition: service_healthy
+volumes:
+  api-target:
+  cargo-cache:
+  platform-pg-data:
+  web-workspace:
+  playwright-workspace:
+  pnpm-store:
