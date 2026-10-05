@@ -141,3 +141,16 @@ Playwright 설정과 빈 `tests/` 폴더가 포함되어 있습니다. 테스트
 | Plugin·Gen-TS 이해와 확장 |  35% | 제공된 코드 이해, API에서 생성 TS·React Query·화면까지의 연결, 본체와 Plugin의 책임·호출 경계 |
 | API·DB 모델 설계          |  35% | 제품 규칙에 맞는 계약·권한·모델·제약·저장 일관성                                              |
 | UI 작성과 사용자 흐름     |  30% | 직접 구현한 업무 화면, 등록→검토→현황 흐름, 상태·오류 처리·사용성                             |
+
+
+## Candidate(My) Implementation Notes
+
+See `approach.md` for:
+
+- implementation approach
+- architecture decisions
+- environment setup and troubleshooting
+- AI-assisted development
+- testing strategy
+- implementation progress
+- known limitations

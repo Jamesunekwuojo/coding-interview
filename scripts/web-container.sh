@@ -5,5 +5,5 @@ for file in package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json vite.c
   cp "/source/$file" "/app/$file"
 done
 corepack enable
-pnpm install --frozen-lockfile --store-dir /pnpm/store >&2
+pnpm install --frozen-lockfile --store-dir /pnpm/store --node-linker=hoisted >&2
 exec "$@"
