@@ -1031,3 +1031,29 @@ Before writing the first migration, I will inspect the existing ID, error, times
 The purpose is to make the new schema and API feel like a natural extension of the existing project rather than a separate design placed on top of it.
 
 After those conventions are confirmed, I can write the migration and proceed incrementally from the database layer upward.
+
+
+### Database Implementation Checkpoint
+
+The database design was implemented in migration `0003_dataroom_and_reviews.sql`.
+
+The migration introduces three tables:
+
+- `materials` — stores DataRoom materials belonging to a workspace.
+- `reviews` — stores an investor's review for a fixed review criterion.
+- `review_evidence` — connects reviews to the materials used as evidence.
+
+The schema uses foreign keys, check constraints, unique constraints, and indexes to enforce important domain rules at the database level. In particular, a review is unique per workspace, investor, and criterion, while duplicate evidence materials cannot be associated with the same review.
+
+The migration also seeds the four materials from the provided scenario:
+
+- `company-overview.md` — `ready`
+- `team.md` — `ready`
+- `revenue.txt` — `failed`
+- `customer-interviews.md` — `processing`
+
+The separate `samples/revenue-update.md` file was intentionally not seeded because it represents a new material that can later be registered through the DataRoom flow.
+
+During development, migration `0003` was modified after it had already been applied to the development database. The migration system detected the changed migration checksum and stopped the API from starting. Since the database contained disposable development data, the development database was reset and the migration was reapplied. Going forward, applied migrations will be treated as immutable, and schema changes will be introduced through new migration files.
+
+The database was then verified manually. The three new tables exist, the expected constraints and indexes are present, the four scenario materials are present with the expected statuses, and the review/evidence tables are initially empty as expected.
