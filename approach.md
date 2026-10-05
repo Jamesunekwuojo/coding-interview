@@ -1057,3 +1057,60 @@ The separate `samples/revenue-update.md` file was intentionally not seeded becau
 During development, migration `0003` was modified after it had already been applied to the development database. The migration system detected the changed migration checksum and stopped the API from starting. Since the database contained disposable development data, the development database was reset and the migration was reapplied. Going forward, applied migrations will be treated as immutable, and schema changes will be introduced through new migration files.
 
 The database was then verified manually. The three new tables exist, the expected constraints and indexes are present, the four scenario materials are present with the expected statuses, and the review/evidence tables are initially empty as expected.
+
+
+### DataRoom API Contract and DTO Implementation
+
+#### API contract
+
+Before implementing the DataRoom dispatcher, I finalized the RPC contract for the material workflow.
+
+The DataRoom exposes three methods:
+
+- `list_materials` — lists materials in the authenticated user's workspace, optionally filtered by title.
+- `get_material` — retrieves one material, including its content.
+- `register_material` — registers a new `.txt` or `.md` material.
+
+The server derives `workspace_id` and `uploader_id` from the authenticated session. The client does not provide these values. The material status is also server-controlled and is initially set to `ready`.
+
+The API uses typed request and response DTOs rather than passing arbitrary JSON structures through the domain layer.
+
+#### Rust DTOs and TypeScript generation
+
+Implemented the DataRoom DTOs in:
+
+`api/src/dataroom/types.rs`
+
+The DTOs include:
+
+- `MaterialStatus`
+- `MaterialSummary`
+- `MaterialDetail`
+- `ListMaterialsParams`
+- `ListMaterialsResponse`
+- `GetMaterialParams`
+- `GetMaterialResponse`
+- `RegisterMaterialParams`
+- `RegisterMaterialResponse`
+
+The existing `serde` and `ts-rs` conventions were preserved. Rust fields use snake_case while the generated API contract uses camelCase for TypeScript consumers.
+
+Generated TypeScript files are produced by the existing Gen-TS pipeline and are not edited manually.
+
+#### Docker TypeScript generation fix
+
+While running `make gen-ts-docker`, TypeScript generation initially failed with an `EROFS` (Read-only filesystem) error.
+
+The problem was caused by the generation output path conflicting with an existing read-only Docker volume mount.
+
+I updated `scripts/gen-ts-docker.sh` so the generation output is explicitly mounted as:
+
+`/out-client:rw,z`
+
+This gives the code-generation process a writable output location while preserving the runtime container's existing read-only volume configuration.
+
+After the change, `make gen-ts-docker` completed successfully and generated the expected TypeScript contracts.
+
+#### Verification
+
+The Gen-TS generation step was executed successfully.
