@@ -1209,3 +1209,124 @@ Next:
 - Implement `get_material`
 - Add material lookup and not-found behavior
 - Verify cross-workspace material access is not exposed
+
+
+### DataRoom Backend: Material Operations Complete
+
+#### Get material
+
+Implemented the `get_material` DataRoom RPC operation.
+
+The operation:
+
+- Deserializes the requested material ID using the typed `GetMaterialParams` DTO.
+- Retrieves the material using both the material ID and the authenticated user's workspace ID.
+- Returns the full `MaterialDetail`, including content and timestamps.
+- Returns `404 Not Found` when the material does not exist or does not belong to the authenticated user's workspace.
+- Maps the database material status to the typed `MaterialStatus` enum.
+
+Workspace scoping is enforced directly in the database query:
+
+```sql
+WHERE id = $1
+  AND workspace_id = $2
+```
+
+This prevents a user from retrieving material content from another workspace and avoids exposing whether a material ID exists outside their accessible workspace.
+
+#### Register material
+
+Implemented the `register_material` DataRoom RPC operation.
+
+The client supplies only:
+
+- title
+- file name
+- content
+
+The server derives the security-sensitive fields:
+
+- `workspace_id` from the authenticated user's workspace;
+- `uploader_id` from the authenticated user's ID;
+- `status` as `ready`;
+- - material ID using the same secure random ID-generation mechanism already used by the authentication system, with a `mat_` prefix.
+
+Validation is performed before database insertion:
+
+- title must not be empty or whitespace-only;
+- file name must end in `.txt` or `.md`, case-insensitively.
+
+I did not add a separate content-size check inside the domain operation because the requirement concerns the entire HTTP request size rather than only the content string. The existing application request-size handling remains responsible for that boundary.
+
+#### Authorization boundary
+
+The DataRoom dispatcher remains responsible for authorization before invoking DataRoom operations.
+
+For `register_material`, the dispatcher verifies that the authenticated user has the `Company` role before calling the material registration operation.
+
+This means an unauthorized investor request is rejected before material validation or database access.
+
+The distinction is intentional:
+
+- `dataroom::dispatch` owns RPC routing and authorization.
+- `register_material` owns material-specific validation and persistence.
+
+#### Testing and debugging
+
+The DataRoom test suite now contains eight focused tests covering:
+
+- cross-workspace RPC rejection;
+- investor registration rejection;
+- successful material retrieval;
+- missing material handling;
+- cross-workspace material retrieval;
+- successful material registration;
+- empty title validation;
+- unsupported file type validation.
+
+All eight tests pass.
+
+During the registration test implementation, the initial test assumptions exposed several issues:
+
+1. The repository's validation error code is `invalid_input`, not `invalid`.
+2. The investor authorization test needed to exercise the dispatcher rather than calling `register_material` directly because authorization belongs to the dispatcher layer.
+3. The `materials.uploader_id` foreign key requires the test user to exist in the `users` table, so the database-backed registration test uses the existing seeded `company-user`.
+4. The successful registration test verifies that the server stores the authenticated user's workspace and user ID rather than accepting those values from the client.
+
+These failures were used to align the tests with the existing architecture and database constraints rather than changing the implementation to satisfy incorrect test assumptions.
+
+#### Verification
+
+The following checks are passing:
+
+```text
+docker compose exec -w /app/api api cargo check --locked
+docker compose exec -w /app/api api cargo test dataroom::tests
+```
+
+The focused DataRoom test suite currently passes:
+
+```text
+8 passed; 0 failed
+```
+
+#### Current implementation status
+
+Completed:
+
+- DataRoom RPC dispatcher
+- Workspace authorization
+- Company-only material registration authorization
+- `list_materials`
+- `get_material`
+- `register_material`
+- Material validation
+- Material persistence
+- Workspace isolation
+- Focused DataRoom backend tests
+
+Next:
+
+- Review Plugin backend/API implementation
+- Define and implement review RPC operations
+- Preserve the existing Plugin/Gen-TS architecture
