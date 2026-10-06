@@ -1114,3 +1114,98 @@ After the change, `make gen-ts-docker` completed successfully and generated the 
 #### Verification
 
 The Gen-TS generation step was executed successfully.
+
+
+
+
+### DataRoom Backend: Dispatcher and List Materials
+
+#### DataRoom RPC architecture
+
+The DataRoom HTTP handler remains intentionally thin. `api/src/handlers/dataroom_rpc.rs` is responsible for extracting the authenticated user, database pool, and `DataroomRpcRequest`, then forwarding the request to `dataroom::dispatch`.
+
+The DataRoom dispatcher in `api/src/dataroom/mod.rs` is responsible for the DataRoom-specific authorization and routing:
+
+1. Verify that the requested `workspace_id` matches the authenticated user's workspace.
+2. Verify role requirements for operations that require specific permissions.
+3. Match the RPC method to the appropriate DataRoom operation.
+4. Deserialize operation-specific parameters.
+5. Execute the domain/database operation.
+
+I kept this separation instead of moving the dispatcher logic into the HTTP handler because it follows the architecture already established by the skeleton and keeps transport concerns separate from DataRoom business logic.
+
+#### Workspace authorization
+
+Workspace isolation is enforced before DataRoom operations are dispatched.
+
+The authenticated user's workspace is treated as the authoritative workspace boundary. The client-provided `workspace_id` is not trusted as proof of access.
+
+If the requested workspace does not match the authenticated user's workspace, the dispatcher returns `403 Forbidden` before executing the requested operation.
+
+For `register_material`, the user's role is also checked before processing the request. Only users with the `Company` role can register materials.
+
+This establishes the authorization boundary before domain-specific processing.
+
+#### List materials
+
+Implemented the `list_materials` DataRoom RPC operation.
+
+The operation:
+
+- Lists materials belonging only to the authenticated user's workspace.
+- Supports an optional title search.
+- Uses parameterized SQL for search values.
+- Sorts results by `created_at DESC, id ASC`.
+- Returns summary information rather than material content.
+- Returns material status as the typed `MaterialStatus` enum.
+- Ignores an empty or whitespace-only search value and treats it as no search filter.
+
+The database query explicitly scopes results using the authenticated user's workspace rather than trusting a workspace identifier from the request.
+
+The API response uses the existing DataRoom DTO boundary:
+
+- `MaterialSummary`
+- `ListMaterialsParams`
+- `ListMaterialsResponse`
+
+These DTOs remain in `api/src/dataroom/types.rs` because they represent the API contract between Rust and TypeScript. `models.rs` is reserved for database/domain models if they become necessary; no additional model abstraction was introduced for this operation because the current query is small and does not benefit from it.
+
+#### Timestamp representation
+
+The DataRoom DTOs currently represent timestamps as `String`. The existing API dependency configuration does not enable SQLx's `time` feature, so the list query converts `TIMESTAMPTZ` to text using PostgreSQL rather than introducing another dependency solely for this operation.
+
+#### Verification
+
+After implementing `list_materials`, the following checks were run successfully:
+
+```bash
+docker compose exec -w /app/api api cargo check --locked
+```
+
+and:
+
+```bash
+docker compose exec -w /app/api api cargo test dataroom::tests
+```
+
+The existing DataRoom authorization tests continued to pass, including:
+
+- rejection of cross-workspace requests;
+- rejection of investor attempts to register materials before input validation.
+
+#### Current implementation status
+
+Completed:
+
+- DataRoom RPC dispatcher
+- Workspace authorization
+- Company-only authorization for material registration
+- `list_materials` RPC
+- Material summary response
+- Focused DataRoom backend tests
+
+Next:
+
+- Implement `get_material`
+- Add material lookup and not-found behavior
+- Verify cross-workspace material access is not exposed
