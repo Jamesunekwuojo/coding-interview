@@ -1447,3 +1447,24 @@ Verification:
 - Result: passed.
 
 
+#### Review Plugin Review List
+
+The Review Plugin `list_reviews` operation is restricted to authenticated investors. Company users receive an empty review list because investor reviews are private and are not available to the company through this Plugin.
+
+For investors, reviews are scoped by both the authenticated workspace and authenticated user. The API does not accept a user ID from the client to determine whose reviews are returned.
+
+The review list joins `reviews` with `review_criteria` so each review includes its criterion title. Evidence is not returned in the list response; the detailed review operation is responsible for returning the linked evidence.
+
+Results are ordered deterministically by the fixed criterion display order, followed by most recently updated reviews and the review ID as a tie-breaker.
+
+During testing, the initial database-backed tests exposed interference caused by Rust running tests in parallel against the same PostgreSQL database. Instead of serializing the tests, the database-backed tests were isolated using temporary users with unique IDs. Temporary reviews are removed before their temporary users are deleted.
+
+Tests cover:
+- an investor with no reviews;
+- returning the authenticated investor's reviews;
+- preventing another investor's reviews from being returned;
+- returning an empty list for company users.
+
+Verification:
+- `cargo test review`
+- Result: 9 passed, 0 failed.
