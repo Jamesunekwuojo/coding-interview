@@ -1330,3 +1330,120 @@ Next:
 - Review Plugin backend/API implementation
 - Define and implement review RPC operations
 - Preserve the existing Plugin/Gen-TS architecture
+
+
+
+### AI-Assisted Review Plugin Contract Review
+
+Before implementing the Review Plugin backend, I used an AI coding assistant to critically review the proposed RPC/API contract against the assignment requirements.
+
+The AI was given the Review Plugin requirements, the proposed RPC methods (`list_criteria`, `get_summary`, `list_reviews`, `get_review`, and `save_review`), the proposed save payload, and the database uniqueness constraint.
+
+The AI identified several important concerns, including deterministic criterion ordering, preserving review IDs during edits, workspace-scoped evidence validation, authorization before input validation, transactional review/evidence updates, strong review status typing, and the need for database-level uniqueness.
+
+I adopted these recommendations where they matched the repository requirements. In particular:
+- criteria will be ordered by `display_order`;
+- review edits will preserve the existing review ID;
+- evidence will be validated against the authenticated workspace and `ready` status;
+- duplicate evidence IDs will be rejected rather than silently deduplicated;
+- unauthorized write requests will be rejected before domain/input validation;
+- review status will use a typed Rust enum and generated TypeScript union;
+- review and evidence changes will be performed in one database transaction;
+- the existing `(workspace_id, criterion_id, user_id)` uniqueness constraint will protect the one-review-per-investor-per-criterion invariant.
+
+I did not adopt every AI recommendation. For example, the assignment does not explicitly require `get_summary` for company users to return zero progress, so I will not invent that behavior. I also treated PostgreSQL `ON CONFLICT DO UPDATE` as an implementation alternative rather than a requirement.
+
+The recommendations were validated against the actual README, migration schema, existing Review Plugin skeleton, and the previously implemented DataRoom architecture.
+
+
+### Review Plugin DTOs and Gen-TS Contract
+
+After reviewing the Review Plugin requirements and existing skeleton, I defined the initial API DTOs for the required review operations.
+
+The Review Plugin uses a typed `ReviewStatus` enum with the two allowed values:
+- `satisfied`
+- `needs_information`
+
+The main DTOs cover:
+- fixed review criteria;
+- investor review progress;
+- review list items;
+- review detail and evidence;
+- review save input;
+- review save response.
+
+The save request intentionally contains only client-controlled review data:
+- criterion ID;
+- review status;
+- opinion;
+- evidence material IDs.
+
+The authenticated user and workspace are not accepted from the client and will be derived from the authenticated session on the server.
+
+The DTOs use `serde(rename_all = "camelCase")` so the generated TypeScript matches the existing frontend conventions.
+
+After implementation, `make gen-ts-docker` successfully generated the corresponding TypeScript types under `api-client/src/types/`.
+
+I verified generated types including:
+- `ReviewStatus` → `"satisfied" | "needs_information"`
+- `SaveReviewParams` → `criterionId`, `status`, `opinion`, `evidenceMaterialIds`
+- `ReviewCriterion` → `reviewQuestion`, `displayOrder`
+- `ReviewDetail` → `criterionId`, `criterionTitle`, `reviewQuestion`, `createdAt`, `updatedAt`, and nested evidence.
+
+No generated TypeScript files were edited manually.
+
+
+### Review Plugin Dispatcher and Criteria
+
+The Review Plugin server follows the same thin-handler/domain-dispatch boundary used by the DataRoom implementation.
+
+The Review Plugin RPC dispatcher:
+- verifies that the requested workspace matches the authenticated user's workspace;
+- routes requests by the Plugin RPC method;
+- keeps authorization decisions at the dispatcher boundary;
+- delegates the actual operation to the corresponding Review Plugin server function.
+
+The first implemented business operation is `list_criteria`.
+
+The criteria are fixed in the `review_criteria` table by the initial migration. The API does not provide criterion creation or modification.
+
+`list_criteria` reads the fixed criteria and explicitly orders them by `display_order ASC`. The resulting order is:
+1. `business`
+2. `team`
+3. `revenue`
+
+A real PostgreSQL-backed test was added using the repository's existing `DATABASE_URL` test convention. The test verifies both the returned criterion IDs and their display order.
+
+Verification:
+- `cargo test list_criteria`
+- Result: 1 passed, 0 failed.
+
+
+### Review Plugin Progress Summary
+
+The Review Plugin `get_summary` operation is restricted to authenticated investors and calculates progress for the current user within the authenticated workspace.
+
+The summary is based on the fixed review criteria rather than the number of existing reviews. This means a new investor starts with all three criteria remaining.
+
+The summary reports:
+- `completed` — criteria with an existing review;
+- `remaining` — criteria without a review;
+- `satisfied` — completed reviews marked as satisfied;
+- `needs_information` — completed reviews marked as needing more information.
+
+A `needs_information` review still counts as completed because the assignment defines progress based on whether the criterion has been reviewed, not whether the investor is satisfied with the available information.
+
+The query is scoped by both `workspace_id` and the authenticated `user_id`, so one investor cannot affect another investor's progress.
+
+Tests were added for:
+- a new investor with no reviews;
+- `needs_information` counting as completed;
+- isolation from another investor's reviews.
+
+Verification:
+- `cargo test get_summary`
+- Result: 3 passed, 0 failed.
+- `cargo check --locked`
+- Result: passed.
+
+
