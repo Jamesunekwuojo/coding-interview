@@ -1706,3 +1706,47 @@ Verification:
 - `cargo check --locked` passed.
 
 The implementation was intentionally kept within the DataRoom milestone. Review Plugin UI and Playwright end-to-end tests remain separate future milestones.
+
+
+### Review Plugin Dashboard and Read-Only UI
+
+The second frontend milestone implemented the Review Plugin dashboard and read-only review experience using the existing Plugin architecture.
+
+The Review Plugin now provides authenticated investors with:
+
+- personal review progress;
+- the fixed review criteria;
+- their own submitted reviews;
+- review status and opinion summaries;
+- on-demand review details;
+- linked evidence information.
+
+The Plugin communicates with the backend exclusively through the existing `PluginHost.call()` boundary. The implemented operations are:
+
+- `get_summary`;
+- `list_criteria`;
+- `list_reviews`;
+- `get_review`.
+
+The Review Plugin uses the existing `scopedKey` convention for React Query. Query keys include the authenticated user ID and workspace ID so review progress and review data cannot be incorrectly reused between different investors or workspaces.
+
+Company users receive a restricted Review UI and do not trigger investor-only RPC queries. The frontend role check is used for user experience and query prevention, while backend authorization remains the final security boundary.
+
+The progress summary follows the backend business rules. In particular, a `needs_information` review counts as completed progress.
+
+Review criteria are rendered in the deterministic order supplied by the backend. Review list responses contain lightweight review information, while full review details are fetched only when the investor selects a specific review.
+
+The read-only detail view displays the criterion, review question, status, opinion, timestamps, and linked evidence. Evidence selection and modification are intentionally deferred to the next milestone.
+
+The UI includes loading, error, empty, and detail states, with retry actions and accessible status/error semantics. The Review Plugin also follows the existing Korean/English localization mechanism and shared UI kit.
+
+No new frontend testing framework was introduced. The repository does not currently contain a unit/component testing framework or frontend component tests; its existing browser-level test infrastructure is Playwright. Adding a new testing framework at this stage would unnecessarily expand the project scope. Verification therefore used the existing type checking, linting, production build, and backend test suite. Dedicated Playwright end-to-end tests remain a later milestone covering the complete business flow.
+
+Verification:
+- `pnpm typecheck` passed;
+- `pnpm lint` passed;
+- `pnpm build` passed;
+- `cargo test` passed: 37 tests;
+- `cargo check --locked` passed.
+
+The implementation intentionally stops at the read-only Review experience. Review creation/editing, DataRoom material selection for evidence, `save_review`, and end-to-end browser tests remain future milestones.
