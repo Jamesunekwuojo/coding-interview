@@ -1750,3 +1750,56 @@ Verification:
 - `cargo check --locked` passed.
 
 The implementation intentionally stops at the read-only Review experience. Review creation/editing, DataRoom material selection for evidence, `save_review`, and end-to-end browser tests remain future milestones.
+
+
+### Review Plugin Review Creation, Editing, Evidence Selection, and Save
+
+The third frontend milestone completed the investor review workflow on top of the existing Review Plugin backend.
+
+The Review Plugin now supports:
+
+- creating a review for an unreviewed criterion;
+- editing an existing review;
+- selecting DataRoom materials as evidence;
+- submitting review status and opinion;
+- replacing evidence when a review is edited;
+- preserving form state when saving fails;
+- refreshing review progress and review lists after a successful save.
+
+The create and edit flows use the same `save_review` RPC operation. When creating a review, the investor selects an unreviewed criterion and starts with an empty opinion and evidence selection. When editing, the existing criterion is kept read-only and the previous status, opinion, and evidence are loaded into the form.
+
+Evidence materials are retrieved through the existing Plugin Host boundary rather than through a new frontend API:
+
+`host.call("list_materials", { search: null }, { target: "dataroom" })`
+
+Only materials with `ready` status can be selected as evidence. Processing and failed materials remain unavailable for selection. The backend remains responsible for the authoritative workspace and readiness validation.
+
+Client-side validation checks that:
+- a criterion is selected;
+- the review status is valid;
+- the opinion is not empty or whitespace-only;
+- the opinion does not exceed 2000 characters;
+- at least one evidence material is selected.
+
+The frontend validation is used for immediate user feedback. The backend continues to enforce the same rules as the final security and integrity boundary.
+
+When `save_review` fails, the editor remains open and preserves the criterion, status, opinion, and selected evidence so the investor can correct the problem or retry. On success, the Review Plugin invalidates the scoped review queries, closes the editor, resets the form, and displays success feedback.
+
+During browser verification, the initial evidence-material request returned HTTP 400 with `invalid_input` and the message `Invalid list parameters.` The Review Plugin had initially passed `null` as the RPC parameters. Inspection of the generated `ListMaterialsParams` contract and the existing DataRoom UI showed that the RPC expects an object containing the optional search field:
+
+`{ search: null }`
+
+The Review Plugin was corrected to use this generated contract shape. No backend or API contract changes were necessary.
+
+The implementation continues to use the existing Plugin Host, React Query, generated TypeScript contracts, UI kit, localization system, and role-based frontend gating. No new endpoint, state-management library, dependency, database migration, or testing framework was introduced.
+
+Verification:
+- `pnpm typecheck` passed;
+- `pnpm lint` passed;
+- `pnpm build` passed;
+- `cargo test` passed: 37 tests;
+- `cargo check --locked` passed;
+- browser verification confirmed DataRoom evidence materials load successfully through the Plugin Host;
+- only `plugins/review/ui/app.tsx` was changed for the runtime integration fix.
+
+Playwright end-to-end testing remains the next frontend milestone.

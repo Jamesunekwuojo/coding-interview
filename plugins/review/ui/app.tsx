@@ -1,19 +1,47 @@
 import React, { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { scopedKey } from "@interview/plugin-sdk";
 import type { PluginProps } from "@interview/plugin-sdk/react";
-import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from "@biyard/components";
+import {
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Label,
+  Select,
+  Textarea,
+} from "@biyard/components";
 import type { GetReviewResponse } from "@interview/api-types/GetReviewResponse";
 import type { GetSummaryResponse } from "@interview/api-types/GetSummaryResponse";
 import type { ListCriteriaResponse } from "@interview/api-types/ListCriteriaResponse";
+import type { ListMaterialsResponse } from "@interview/api-types/ListMaterialsResponse";
 import type { ListReviewsResponse } from "@interview/api-types/ListReviewsResponse";
+import type { MaterialSummary } from "@interview/api-types/MaterialSummary";
 import type { ReviewCriterion } from "@interview/api-types/ReviewCriterion";
 import type { ReviewStatus } from "@interview/api-types/ReviewStatus";
 import type { ReviewSummaryItem } from "@interview/api-types/ReviewSummaryItem";
+import type { SaveReviewParams } from "@interview/api-types/SaveReviewParams";
+import type { SaveReviewResponse } from "@interview/api-types/SaveReviewResponse";
 
 export const App: React.FC<PluginProps> = ({ host, context }) => {
+  const queryClient = useQueryClient();
   const isInvestor = context.user.role === "investor";
+
+  // Modal states
   const [selectedReviewId, setSelectedReviewId] = useState<string | null>(null);
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [editorMode, setEditorMode] = useState<"create" | "edit" | null>(null);
+  const [, setEditingReviewId] = useState<string | null>(null);
+
+  // Form states
+  const [formCriterionId, setFormCriterionId] = useState("");
+  const [formStatus, setFormStatus] = useState<ReviewStatus>("satisfied");
+  const [formOpinion, setFormOpinion] = useState("");
+  const [formEvidenceIds, setFormEvidenceIds] = useState<string[]>([]);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [successNotification, setSuccessNotification] = useState<string | null>(null);
 
   const t =
     context.locale === "ko"
@@ -54,6 +82,32 @@ export const App: React.FC<PluginProps> = ({ host, context }) => {
           statusReady: "준비 완료",
           statusProcessing: "처리 중",
           statusFailed: "실패",
+          writeReview: "새 검토 작성",
+          editReview: "검토 수정",
+          editAction: "수정",
+          createAction: "검토 작성",
+          reviewCriterion: "검토 기준",
+          selectCriterion: "검토 기준을 선택하세요",
+          reviewStatus: "검토 결과",
+          opinionPlaceholder: "검토 의견을 입력하세요 (최대 2000자)",
+          evidenceSelection: "증빙 자료 선택",
+          evidenceHelp: "최소 1개 이상의 준비 완료된 자료를 선택해주세요.",
+          selectedCount: "선택됨",
+          noReadyMaterials:
+            "준비 완료된 자료가 없습니다. 검토를 제출하려면 회사가 데이터룸에 자료를 등록해야 합니다.",
+          loadingMaterials: "데이터룸 자료를 불러오는 중입니다...",
+          fetchMaterialsError: "데이터룸 자료를 불러오지 못했습니다.",
+          save: "저장",
+          saving: "저장 중...",
+          cancel: "취소",
+          createSuccess: "검토가 성공적으로 등록되었습니다.",
+          editSuccess: "검토가 성공적으로 수정되었습니다.",
+          saveError: "검토를 저장하지 못했습니다.",
+          validationCriterionRequired: "검토 기준을 선택해주세요.",
+          validationEmptyOpinion: "검토 의견을 입력해주세요.",
+          validationMaxOpinion: "검토 의견은 최대 2000자까지 입력 가능합니다.",
+          validationEvidenceRequired: "최소 1개 이상의 증빙 자료를 선택해주세요.",
+          allCriteriaReviewed: "모든 기준의 검토가 완료되었습니다.",
         }
       : {
           pluginTitle: "Review Dashboard",
@@ -92,18 +146,70 @@ export const App: React.FC<PluginProps> = ({ host, context }) => {
           statusReady: "Ready",
           statusProcessing: "Processing",
           statusFailed: "Failed",
+          writeReview: "Write Review",
+          editReview: "Edit Review",
+          editAction: "Edit",
+          createAction: "Review",
+          reviewCriterion: "Review Criterion",
+          selectCriterion: "Select a criterion",
+          reviewStatus: "Review Status",
+          opinionPlaceholder: "Enter your evaluation (up to 2000 characters)",
+          evidenceSelection: "Evidence Materials",
+          evidenceHelp: "Select at least one ready material as evidence.",
+          selectedCount: "Selected",
+          noReadyMaterials:
+            "No ready materials available. Materials must be uploaded in DataRoom by the company.",
+          loadingMaterials: "Loading DataRoom materials...",
+          fetchMaterialsError: "Failed to load DataRoom materials.",
+          save: "Save",
+          saving: "Saving...",
+          cancel: "Cancel",
+          createSuccess: "Review submitted successfully.",
+          editSuccess: "Review updated successfully.",
+          saveError: "Failed to save review.",
+          validationCriterionRequired: "Please select a review criterion.",
+          validationEmptyOpinion: "Review opinion cannot be empty.",
+          validationMaxOpinion: "Review opinion cannot exceed 2000 characters.",
+          validationEvidenceRequired: "At least one evidence material must be selected.",
+          allCriteriaReviewed: "All criteria have been reviewed.",
         };
 
-  // Close modal on Escape key
+  // Save Review Mutation
+  const saveMutation = useMutation({
+    mutationFn: async (params: SaveReviewParams) => {
+      const response = await host.call<SaveReviewResponse>("save_review", params);
+      return response;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: scopedKey(context, "review"),
+      });
+      setIsEditorOpen(false);
+      setEditingReviewId(null);
+      setFormError(null);
+      setSuccessNotification(editorMode === "create" ? t.createSuccess : t.editSuccess);
+    },
+    onError: (error) => {
+      // Keep editor open and preserve user input
+      setFormError(error instanceof Error ? error.message : t.saveError);
+    },
+  });
+
+  // Close modals on Escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && selectedReviewId) {
-        setSelectedReviewId(null);
+      if (e.key === "Escape") {
+        if (isEditorOpen && !saveMutation.isPending) {
+          setIsEditorOpen(false);
+          setFormError(null);
+        } else if (selectedReviewId) {
+          setSelectedReviewId(null);
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedReviewId]);
+  }, [isEditorOpen, saveMutation.isPending, selectedReviewId]);
 
   // Queries (only enabled for investors)
   const summaryQuery = useQuery({
@@ -132,6 +238,96 @@ export const App: React.FC<PluginProps> = ({ host, context }) => {
         : null,
     enabled: isInvestor && !!selectedReviewId,
   });
+
+  // Materials query for evidence selection
+  const materialsQuery = useQuery({
+    queryKey: scopedKey(context, "dataroom", "materials"),
+    queryFn: () =>
+      host.call<ListMaterialsResponse>("list_materials", { search: null }, { target: "dataroom" }),
+    enabled: isInvestor && isEditorOpen,
+  });
+
+  const summary = summaryQuery.data?.summary;
+  const criteria: ReviewCriterion[] = criteriaQuery.data?.criteria ?? [];
+  const reviews: ReviewSummaryItem[] = reviewsQuery.data?.reviews ?? [];
+
+  // Map reviews by criterionId for fast lookup
+  const reviewMapByCriterion = new Map<string, ReviewSummaryItem>();
+  for (const review of reviews) {
+    reviewMapByCriterion.set(review.criterionId, review);
+  }
+
+  const unreviewedCriteria = criteria.filter((c) => !reviewMapByCriterion.has(c.id));
+
+  // Open Create Mode
+  const handleOpenCreate = (initialCriterionId?: string) => {
+    const defaultCriterion =
+      initialCriterionId || unreviewedCriteria[0]?.id || (criteria[0]?.id ?? "");
+    setEditorMode("create");
+    setEditingReviewId(null);
+    setFormCriterionId(defaultCriterion);
+    setFormStatus("satisfied");
+    setFormOpinion("");
+    setFormEvidenceIds([]);
+    setFormError(null);
+    setIsEditorOpen(true);
+  };
+
+  // Open Edit Mode
+  const handleOpenEdit = async (reviewId: string) => {
+    setFormError(null);
+    setEditorMode("edit");
+    setEditingReviewId(reviewId);
+    setIsEditorOpen(true);
+
+    try {
+      let reviewDetail = detailQuery.data?.review;
+      if (!reviewDetail || reviewDetail.id !== reviewId) {
+        const res = await host.call<GetReviewResponse>("get_review", { reviewId });
+        reviewDetail = res.review;
+      }
+      setFormCriterionId(reviewDetail.criterionId);
+      setFormStatus(reviewDetail.status);
+      setFormOpinion(reviewDetail.opinion);
+      setFormEvidenceIds(reviewDetail.evidence.map((e) => e.id));
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : t.fetchDetailError);
+    }
+  };
+
+  const handleToggleEvidence = (materialId: string) => {
+    setFormEvidenceIds((prev) =>
+      prev.includes(materialId) ? prev.filter((id) => id !== materialId) : [...prev, materialId],
+    );
+  };
+
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formCriterionId) {
+      setFormError(t.validationCriterionRequired);
+      return;
+    }
+    if (!formOpinion.trim()) {
+      setFormError(t.validationEmptyOpinion);
+      return;
+    }
+    if (formOpinion.length > 2000) {
+      setFormError(t.validationMaxOpinion);
+      return;
+    }
+    if (formEvidenceIds.length === 0) {
+      setFormError(t.validationEvidenceRequired);
+      return;
+    }
+
+    setFormError(null);
+    saveMutation.mutate({
+      criterionId: formCriterionId,
+      status: formStatus,
+      opinion: formOpinion,
+      evidenceMaterialIds: formEvidenceIds,
+    });
+  };
 
   const renderReviewStatusBadge = (status: ReviewStatus) => {
     switch (status) {
@@ -197,23 +393,47 @@ export const App: React.FC<PluginProps> = ({ host, context }) => {
     void reviewsQuery.refetch();
   };
 
-  const summary = summaryQuery.data?.summary;
-  const criteria: ReviewCriterion[] = criteriaQuery.data?.criteria ?? [];
-  const reviews: ReviewSummaryItem[] = reviewsQuery.data?.reviews ?? [];
+  const allMaterials: MaterialSummary[] = materialsQuery.data?.materials ?? [];
+  const readyMaterials = allMaterials.filter((m) => m.status === "ready");
+  const unreadyMaterials = allMaterials.filter((m) => m.status !== "ready");
 
-  // Map review status by criterionId for quick lookup
-  const reviewMapByCriterion = new Map<string, ReviewSummaryItem>();
-  for (const review of reviews) {
-    reviewMapByCriterion.set(review.criterionId, review);
-  }
+  const selectedCriterionObj = criteria.find((c) => c.id === formCriterionId);
 
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div>
-        <h1 className="text-heading-4 font-semibold">{t.pluginTitle}</h1>
-        <p className="text-caption text-muted-foreground">{t.pluginSubtitle}</p>
+      {/* Header and Write Review Action */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-heading-4 font-semibold">{t.pluginTitle}</h1>
+          <p className="text-caption text-muted-foreground">{t.pluginSubtitle}</p>
+        </div>
+        <div>
+          <Button
+            variant="primary"
+            onClick={() => handleOpenCreate()}
+            disabled={unreviewedCriteria.length === 0}
+          >
+            {t.writeReview}
+          </Button>
+        </div>
       </div>
+
+      {/* Success Notification Banner */}
+      {successNotification ? (
+        <div
+          role="status"
+          className="flex items-center justify-between rounded-lg border border-success/30 bg-success-muted p-4 text-success"
+        >
+          <span>{successNotification}</span>
+          <button
+            type="button"
+            className="text-body-sm font-semibold hover:underline"
+            onClick={() => setSuccessNotification(null)}
+          >
+            {t.close}
+          </button>
+        </div>
+      ) : null}
 
       {/* Loading state */}
       {isInitialLoading ? (
@@ -286,18 +506,36 @@ export const App: React.FC<PluginProps> = ({ host, context }) => {
                         {criterion.reviewQuestion}
                       </p>
                     </CardHeader>
-                    {existingReview ? (
-                      <CardContent className="pt-0">
+                    <CardContent className="pt-0">
+                      {existingReview ? (
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="flex-1"
+                            onClick={() => setSelectedReviewId(existingReview.id)}
+                          >
+                            {t.viewDetails}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleOpenEdit(existingReview.id)}
+                          >
+                            {t.editAction}
+                          </Button>
+                        </div>
+                      ) : (
                         <Button
                           variant="outline"
                           size="sm"
                           className="w-full"
-                          onClick={() => setSelectedReviewId(existingReview.id)}
+                          onClick={() => handleOpenCreate(criterion.id)}
                         >
-                          {t.viewDetails}
+                          {t.createAction}
                         </Button>
-                      </CardContent>
-                    ) : null}
+                      )}
+                    </CardContent>
                   </Card>
                 );
               })}
@@ -336,14 +574,23 @@ export const App: React.FC<PluginProps> = ({ host, context }) => {
                       <p className="text-body-sm text-muted-foreground line-clamp-3">
                         {review.opinion}
                       </p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => setSelectedReviewId(review.id)}
-                      >
-                        {t.viewDetails}
-                      </Button>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => setSelectedReviewId(review.id)}
+                        >
+                          {t.viewDetails}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleOpenEdit(review.id)}
+                        >
+                          {t.editAction}
+                        </Button>
+                      </div>
                     </CardContent>
                   </Card>
                 ))}
@@ -353,8 +600,8 @@ export const App: React.FC<PluginProps> = ({ host, context }) => {
         </>
       )}
 
-      {/* Review Detail Modal */}
-      {selectedReviewId ? (
+      {/* Review Detail Modal (Read-Only) */}
+      {selectedReviewId && !isEditorOpen ? (
         <div
           role="dialog"
           aria-modal="true"
@@ -456,11 +703,262 @@ export const App: React.FC<PluginProps> = ({ host, context }) => {
               ) : null}
             </div>
 
-            <div className="flex justify-end border-t border-border p-4">
+            <div className="flex justify-between border-t border-border p-4">
+              <Button
+                variant="primary"
+                onClick={() => {
+                  const id = detailQuery.data?.review.id || selectedReviewId;
+                  setSelectedReviewId(null);
+                  if (id) void handleOpenEdit(id);
+                }}
+                disabled={!detailQuery.data?.review}
+              >
+                {t.editReview}
+              </Button>
               <Button variant="outline" onClick={() => setSelectedReviewId(null)}>
                 {t.close}
               </Button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Review Editor Modal (Create / Edit) */}
+      {isEditorOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="review-editor-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !saveMutation.isPending) {
+              setIsEditorOpen(false);
+              setFormError(null);
+            }
+          }}
+        >
+          <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-lg border border-border bg-card shadow-lg">
+            <div className="flex items-center justify-between border-b border-border p-6">
+              <h2 id="review-editor-title" className="text-heading-5 font-semibold">
+                {editorMode === "edit" ? t.editReview : t.writeReview}
+              </h2>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setIsEditorOpen(false);
+                  setFormError(null);
+                }}
+                disabled={saveMutation.isPending}
+                aria-label={t.close}
+              >
+                ✕
+              </Button>
+            </div>
+
+            <form onSubmit={handleFormSubmit} className="flex-1 overflow-y-auto p-6 space-y-6">
+              {/* Form Error Banner */}
+              {formError ? (
+                <div
+                  role="alert"
+                  className="rounded-md bg-destructive-muted p-4 text-body-sm text-destructive"
+                >
+                  {formError}
+                </div>
+              ) : null}
+
+              {/* Criterion Selection */}
+              <div className="space-y-2">
+                <Label htmlFor="review-criterion">{t.reviewCriterion}</Label>
+                {editorMode === "edit" ? (
+                  <div className="rounded-md border border-input bg-muted/50 p-3 text-body-sm font-medium">
+                    {selectedCriterionObj?.title ?? formCriterionId}
+                  </div>
+                ) : (
+                  <Select
+                    id="review-criterion"
+                    value={formCriterionId}
+                    onChange={(e) => setFormCriterionId(e.target.value)}
+                    disabled={saveMutation.isPending}
+                    required
+                  >
+                    {unreviewedCriteria.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.title}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+                {selectedCriterionObj ? (
+                  <p className="text-caption text-muted-foreground">
+                    {selectedCriterionObj.reviewQuestion}
+                  </p>
+                ) : null}
+              </div>
+
+              {/* Review Status Selection */}
+              <div className="space-y-2">
+                <Label htmlFor="review-status">{t.reviewStatus}</Label>
+                <Select
+                  id="review-status"
+                  value={formStatus}
+                  onChange={(e) => setFormStatus(e.target.value as ReviewStatus)}
+                  disabled={saveMutation.isPending}
+                  required
+                >
+                  <option value="satisfied">{t.satisfied}</option>
+                  <option value="needs_information">{t.needsInformation}</option>
+                </Select>
+              </div>
+
+              {/* Opinion Textarea */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="review-opinion">{t.opinion}</Label>
+                  <span
+                    className={`text-caption ${
+                      formOpinion.length > 2000
+                        ? "text-destructive font-semibold"
+                        : "text-muted-foreground"
+                    }`}
+                  >
+                    {formOpinion.length} / 2000
+                  </span>
+                </div>
+                <Textarea
+                  id="review-opinion"
+                  rows={5}
+                  value={formOpinion}
+                  onChange={(e) => setFormOpinion(e.target.value)}
+                  placeholder={t.opinionPlaceholder}
+                  disabled={saveMutation.isPending}
+                  required
+                />
+              </div>
+
+              {/* Evidence Materials Selection */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label>{t.evidenceSelection}</Label>
+                  <span className="text-caption font-medium text-foreground">
+                    {t.selectedCount}: {formEvidenceIds.length}
+                  </span>
+                </div>
+                <p className="text-caption text-muted-foreground">{t.evidenceHelp}</p>
+
+                {materialsQuery.isPending ? (
+                  <p role="status" className="p-4 text-center text-caption text-muted-foreground">
+                    {t.loadingMaterials}
+                  </p>
+                ) : materialsQuery.isError ? (
+                  <div
+                    role="alert"
+                    className="space-y-2 rounded-md bg-destructive-muted p-3 text-caption text-destructive"
+                  >
+                    <p>{t.fetchMaterialsError}</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => materialsQuery.refetch()}
+                    >
+                      {t.retry}
+                    </Button>
+                  </div>
+                ) : readyMaterials.length === 0 ? (
+                  <div
+                    role="alert"
+                    className="rounded-md border border-warning/30 bg-warning-muted p-4 text-caption text-warning"
+                  >
+                    {t.noReadyMaterials}
+                  </div>
+                ) : (
+                  <div className="max-h-60 overflow-y-auto divide-y divide-border rounded-md border border-border">
+                    {readyMaterials.map((material) => {
+                      const isChecked = formEvidenceIds.includes(material.id);
+                      return (
+                        <label
+                          key={material.id}
+                          htmlFor={`evidence-${material.id}`}
+                          className={`flex items-center justify-between p-3 transition-colors cursor-pointer ${
+                            isChecked ? "bg-secondary/40" : "hover:bg-secondary/20"
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="checkbox"
+                              id={`evidence-${material.id}`}
+                              checked={isChecked}
+                              onChange={() => handleToggleEvidence(material.id)}
+                              disabled={saveMutation.isPending}
+                              className="h-4 w-4 rounded border-input text-primary focus:ring-ring cursor-pointer"
+                            />
+                            <div>
+                              <p className="text-body-sm font-medium">{material.title}</p>
+                              <p className="text-caption text-muted-foreground">
+                                {material.fileName}
+                              </p>
+                            </div>
+                          </div>
+                          <div>{renderMaterialStatusBadge(material.status)}</div>
+                        </label>
+                      );
+                    })}
+
+                    {/* Unready Materials (Disabled) */}
+                    {unreadyMaterials.map((material) => (
+                      <div
+                        key={material.id}
+                        className="flex items-center justify-between p-3 opacity-50 cursor-not-allowed bg-muted/20"
+                      >
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            disabled
+                            className="h-4 w-4 rounded border-input cursor-not-allowed"
+                          />
+                          <div>
+                            <p className="text-body-sm font-medium">{material.title}</p>
+                            <p className="text-caption text-muted-foreground">
+                              {material.fileName}
+                            </p>
+                          </div>
+                        </div>
+                        <div>{renderMaterialStatusBadge(material.status)}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-end gap-3 pt-4 border-t border-border">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setIsEditorOpen(false);
+                    setFormError(null);
+                  }}
+                  disabled={saveMutation.isPending}
+                >
+                  {t.cancel}
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  disabled={
+                    saveMutation.isPending ||
+                    !formCriterionId ||
+                    !formOpinion.trim() ||
+                    formOpinion.length > 2000 ||
+                    formEvidenceIds.length === 0
+                  }
+                >
+                  {saveMutation.isPending ? t.saving : t.save}
+                </Button>
+              </div>
+            </form>
           </div>
         </div>
       ) : null}
