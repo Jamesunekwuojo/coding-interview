@@ -1500,3 +1500,129 @@ Verification:
 - Result: 4 passed, 0 failed.
 - `cargo check --locked`
 - Result: passed.
+
+
+### AI-Assisted Save Review Concurrency and Transaction Review
+
+Before implementing `save_review`, I used an AI coding assistant to critically review the proposed design against the assignment requirements. The AI was instructed not to write implementation code and instead focus on authorization ordering, evidence validation, transactions, create/update races, evidence replacement, rollback behavior, and database constraints.
+
+The AI recommended using PostgreSQL `INSERT ... ON CONFLICT DO UPDATE` inside a transaction rather than a separate `SELECT` followed by `INSERT` or `UPDATE`.
+
+I adopted this recommendation because the existing database has a unique constraint on `(workspace_id, criterion_id, user_id)`, and the PostgreSQL upsert provides an atomic create/update path that is safe when two saves for the same investor and criterion happen concurrently.
+
+I also adopted the recommendations to:
+- reject duplicate evidence IDs instead of silently deduplicating them;
+- validate all evidence IDs in one parameterized SQL query;
+- require every evidence material to belong to the authenticated workspace and have `ready` status;
+- replace review evidence inside the same transaction as the review mutation;
+- preserve the existing review ID and `created_at` when editing;
+- rely on the database uniqueness constraint as the final protection against duplicate reviews.
+
+I modified one recommendation: instead of hard-coding the fixed criterion IDs in Rust, criterion existence will be checked against the existing `review_criteria` table. The migration already defines the fixed criteria and the foreign-key relationship, so duplicating those IDs in application logic would create an unnecessary second source of truth.
+
+I rejected unnecessary complexity such as advisory locks, a preliminary `SELECT ... FOR UPDATE`, separate create/update RPC methods, and generic repository abstractions.
+
+The recommendations were validated through focused tests covering authorization, input validation, evidence validation, create/update behavior, rollback, and concurrent saves
+
+
+
+### Review Plugin Save Review and Transactional Persistence
+
+The Review Plugin `save_review` operation is restricted to authenticated investors. The authenticated workspace and user are derived from the server-side session rather than accepted from the client.
+
+The save operation validates:
+- the review criterion exists in the fixed `review_criteria` table;
+- the opinion is not empty or whitespace-only;
+- the opinion is no longer than 2000 characters;
+- at least one evidence material is provided;
+- evidence material IDs are unique;
+- every evidence material belongs to the authenticated workspace;
+- every evidence material has `ready` status.
+
+Evidence validation is performed with a parameterized query and the number of valid materials is compared with the number requested. This prevents missing, cross-workspace, processing, or failed materials from being silently accepted.
+
+Review creation and editing use PostgreSQL `INSERT ... ON CONFLICT DO UPDATE` with the existing uniqueness constraint on `(workspace_id, criterion_id, user_id)`. This provides an atomic create/update path for concurrent saves.
+
+When editing an existing review, the existing review ID and `created_at` are preserved. Only the review status, opinion, and `updated_at` are changed.
+
+Evidence is replaced inside the same database transaction as the review mutation. The existing evidence links are deleted and the new evidence links are inserted before the transaction is committed.
+
+If any database operation fails, the transaction is rolled back so that the review and its previous evidence remain unchanged. A rollback test was added to verify this behavior.
+
+Concurrency was also tested by executing two saves for the same investor and criterion concurrently. The test verifies that the database uniqueness constraint prevents duplicate reviews and that the final review contains one consistent set of evidence from one of the successful saves.
+
+The implementation intentionally does not introduce a queue or background worker. `save_review` is a short transactional database operation that needs to return its result synchronously. Database constraints and transactions are sufficient for the concurrency and atomicity requirements of this assignment.
+
+Tests added for `save_review` cover authorization, input validation, evidence validation, review creation, review editing, evidence replacement, transaction rollback, and concurrent saves.
+
+Verification:
+- focused `save_review` tests passed;
+- create and update persistence tests passed;
+- rollback test passed;
+- concurrent save test passed.
+
+
+### AI-Assisted Backend Architecture Review and Refactor
+
+Before moving to the frontend, I used an AI coding assistant to review the completed DataRoom and Review Plugin backend structure. The goal was to identify whether the implementation had unnecessary complexity or whether the current files were becoming too large to maintain.
+
+The review identified that the backend was functionally complete and that the main maintainability issue was file density rather than a broken architecture. In particular, the Review Plugin `server/mod.rs` contained both the implementation and a large test suite, while the DataRoom module also mixed implementation and tests.
+
+The AI recommended a targeted refactor instead of introducing a large layered architecture such as controllers, services, repositories, and DAOs.
+
+I adopted the following structure:
+
+```text
+api/src/dataroom/
+├── mod.rs
+├── models.rs
+├── types.rs
+└── tests.rs
+
+plugins/review/server/
+├── mod.rs
+├── models.rs
+├── types.rs
+└── tests.rs
+```
+
+The responsibilities are:
+
+- `mod.rs` — RPC dispatch, authorization guards, validation, transaction orchestration, and business operations.
+- `models.rs` — internal SQLx row structures used to map meaningful database query results.
+- `types.rs` — public API/Plugin DTOs and `ts-rs` generated TypeScript contracts.
+- `tests.rs` — backend tests and test helpers.
+
+The tests were moved out of the main implementation modules without changing their behavior. This reduced the Review Plugin server module from roughly 2205 lines to 433 lines and the DataRoom module from roughly 503 lines to 207 lines.
+
+I also replaced meaningful anonymous SQLx tuples with named internal row models, including material summary/detail rows, review criteria rows, review summary rows, review list rows, and review detail rows.
+
+I intentionally did not create trivial structs for scalar queries such as counts, booleans, or single IDs. The purpose of `models.rs` is to make multi-column database results easier to understand and maintain, not to create unnecessary abstractions.
+
+I did not introduce service/repository layers or other enterprise-style abstractions because they were not needed for the size and requirements of this assignment.
+
+The refactor did not change:
+- API/Plugin DTO contracts;
+- generated TypeScript contracts;
+- authentication or authorization behavior;
+- workspace isolation;
+- database migrations;
+- transaction boundaries;
+- Review Plugin concurrency behavior;
+- frontend behavior.
+
+The existing `types.rs` files remain the source of the API contract, while `models.rs` contains internal database representations.
+
+Verification after the refactor:
+
+- `cargo test review` — 29 passed, 0 failed.
+- `cargo test dataroom` — 8 passed, 0 failed.
+- `cargo test` — 37 passed, 0 failed.
+- `cargo check --locked` — passed with 0 errors and 0 warnings.
+- `make gen-ts-docker` — passed.
+- Generated TypeScript was regenerated successfully and had no changes.
+- Frontend files and migrations remained unchanged.
+
+Two possible future improvements were identified during the review: sharing the duplicated Review Detail response hydration logic between `get_review` and `save_review`, and batching evidence inserts. These were intentionally left out because they are optimizations rather than requirements, and introducing them at this stage would increase refactor scope without improving the assignment outcome.
+
+The result is a cleaner backend structure while preserving the existing security, API contracts, persistence behavior, and tests.
