@@ -28,12 +28,7 @@ pub async fn dispatch(
             UserRole::Investor => get_summary(pool, user).await,
             _ => Err(ApiError::forbidden()),
         },
-        // "list_reviews" => list_reviews(pool, user).await,
-        // "get_review" => match user.role {
 
-        //     UserRole::Investor => get_review(pool, user, request.params).await,
-        //     _ => Err(ApiError::forbidden())
-        // }
         "list_reviews" => match user.role {
             UserRole::Investor => list_reviews(pool, user).await,
             _ => Ok(RpcResponse {
@@ -42,6 +37,11 @@ pub async fn dispatch(
                 })
                 .map_err(ApiError::storage)?,
             }),
+        },
+
+        "get_review" => match user.role {
+            UserRole::Investor => get_review(pool, user, request.params).await,
+            _ => Err(ApiError::forbidden()),
         },
         // "save_review" => match user.role{
 
@@ -178,6 +178,111 @@ async fn list_reviews(pool: &PgPool, user: &AuthenticatedUser) -> Result<RpcResp
         .collect();
 
     let result = types::ListReviewsResponse { reviews };
+
+    Ok(RpcResponse {
+        result: serde_json::to_value(result).map_err(ApiError::storage)?,
+    })
+}
+
+// get_review stub..
+async fn get_review(
+    pool: &PgPool,
+    user: &AuthenticatedUser,
+    params: serde_json::Value,
+) -> Result<RpcResponse, ApiError> {
+    let params: types::GetReviewParams = serde_json::from_value(params)
+        .map_err(|_| ApiError::invalid("Invalid review parameters"))?;
+
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ),
+    >(
+        "SELECT
+            r.id,
+            r.criterion_id,
+            c.title,
+            c.review_question,
+            r.status,
+            r.opinion,
+            r.created_at::text,
+            r.updated_at::text,
+            m.id,
+            m.title,
+            m.file_name,
+            m.status
+         FROM reviews r
+         JOIN review_criteria c
+           ON c.id = r.criterion_id
+         LEFT JOIN review_evidence re
+           ON re.review_id = r.id
+         LEFT JOIN materials m
+           ON m.id = re.material_id
+           AND m.workspace_id = r.workspace_id
+         WHERE r.id = $1
+           AND r.workspace_id = $2
+           AND r.user_id = $3
+         ORDER BY m.created_at ASC, m.id ASC",
+    )
+    .bind(&params.review_id)
+    .bind(&user.workspace_id)
+    .bind(&user.id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::storage)?;
+
+    let Some(first) = rows.first() else {
+        return Err(ApiError::not_found());
+    };
+
+    let status = match first.4.as_str() {
+        "satisfied" => types::ReviewStatus::Satisfied,
+        "needs_information" => types::ReviewStatus::NeedsInformation,
+        _ => unreachable!("invalid review status in database"),
+    };
+
+    let evidence = rows
+        .iter()
+        .filter_map(|row| {
+            let id = row.8.clone()?;
+            let title = row.9.clone()?;
+            let file_name = row.10.clone()?;
+            let status = row.11.clone()?;
+
+            Some(types::ReviewEvidence {
+                id,
+                title,
+                file_name,
+                status,
+            })
+        })
+        .collect();
+
+    let review = types::ReviewDetail {
+        id: first.0.clone(),
+        criterion_id: first.1.clone(),
+        criterion_title: first.2.clone(),
+        review_question: first.3.clone(),
+        status,
+        opinion: first.5.clone(),
+        evidence,
+        created_at: first.6.clone(),
+        updated_at: first.7.clone(),
+    };
+
+    let result = types::GetReviewResponse { review };
 
     Ok(RpcResponse {
         result: serde_json::to_value(result).map_err(ApiError::storage)?,
@@ -643,5 +748,231 @@ mod tests {
             serde_json::from_value(response.result).expect("response should deserialize");
 
         assert!(result.reviews.is_empty());
+    }
+
+    // get_review tests..
+
+    #[tokio::test]
+    async fn get_review_returns_own_review_with_evidence() {
+        let database_url =
+            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for integration tests");
+
+        let pool = PgPool::connect(&database_url)
+            .await
+            .expect("failed to connect to database");
+
+        let user_id = "get-review-own-investor";
+        let review_id = "test-get-review-own";
+        let evidence_id = "mat-doc-business";
+
+        let user = create_test_investor(&pool, user_id).await;
+
+        sqlx::query(
+            "INSERT INTO reviews
+            (id, workspace_id, user_id, criterion_id, status, opinion)
+         VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(review_id)
+        .bind("lighthouse")
+        .bind(user_id)
+        .bind("business")
+        .bind("satisfied")
+        .bind("Business model is clearly documented.")
+        .execute(&pool)
+        .await
+        .expect("failed to insert test review");
+
+        sqlx::query(
+            "INSERT INTO review_evidence (review_id, material_id)
+         VALUES ($1, $2)",
+        )
+        .bind(review_id)
+        .bind(evidence_id)
+        .execute(&pool)
+        .await
+        .expect("failed to insert test evidence");
+
+        let request = PluginRpcRequest {
+            plugin_id: ID.to_string(),
+            workspace_id: "lighthouse".to_string(),
+            method: "get_review".to_string(),
+            params: serde_json::json!({
+                "reviewId": review_id
+            }),
+        };
+
+        let result = dispatch(&pool, &user, request).await;
+
+        sqlx::query("DELETE FROM reviews WHERE id = $1")
+            .bind(review_id)
+            .execute(&pool)
+            .await
+            .expect("failed to clean up test review");
+
+        delete_test_user(&pool, user_id).await;
+
+        let response = result.expect("get_review should succeed");
+
+        let result: types::GetReviewResponse =
+            serde_json::from_value(response.result).expect("response should deserialize");
+
+        let review = result.review;
+
+        assert_eq!(review.id, review_id);
+        assert_eq!(review.criterion_id, "business");
+        assert_eq!(review.criterion_title, "사업 이해");
+        assert_eq!(
+            review.review_question,
+            "사업 모델과 고객·시장에 관한 핵심 내용이 자료로 확인되는가?"
+        );
+        assert_eq!(review.status, types::ReviewStatus::Satisfied);
+        assert_eq!(review.opinion, "Business model is clearly documented.");
+
+        assert_eq!(review.evidence.len(), 1);
+        assert_eq!(review.evidence[0].id, evidence_id);
+        assert_eq!(review.evidence[0].title, "회사 소개");
+        assert_eq!(review.evidence[0].file_name, "company-overview.md");
+        assert_eq!(review.evidence[0].status, "ready");
+    }
+
+    #[tokio::test]
+    async fn get_review_returns_not_found_for_missing_review() {
+        let database_url =
+            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for integration tests");
+
+        let pool = PgPool::connect(&database_url)
+            .await
+            .expect("failed to connect to database");
+
+        let user_id = "get-review-missing-investor";
+        let user = create_test_investor(&pool, user_id).await;
+
+        let request = PluginRpcRequest {
+            plugin_id: ID.to_string(),
+            workspace_id: "lighthouse".to_string(),
+            method: "get_review".to_string(),
+            params: serde_json::json!({
+                "reviewId": "review-that-does-not-exist"
+            }),
+        };
+
+        let result = dispatch(&pool, &user, request).await;
+
+        delete_test_user(&pool, user_id).await;
+
+        let error = result.expect_err("missing review should return an error");
+
+        assert_eq!(error.0, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn get_review_returns_not_found_for_another_investor() {
+        let database_url =
+            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for integration tests");
+
+        let pool = PgPool::connect(&database_url)
+            .await
+            .expect("failed to connect to database");
+
+        let owner_id = "get-review-owner-investor";
+        let other_id = "get-review-other-investor";
+        let review_id = "test-get-review-private";
+
+        create_test_investor(&pool, owner_id).await;
+        let other = create_test_investor(&pool, other_id).await;
+
+        sqlx::query(
+            "INSERT INTO reviews
+            (id, workspace_id, user_id, criterion_id, status, opinion)
+         VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(review_id)
+        .bind("lighthouse")
+        .bind(owner_id)
+        .bind("business")
+        .bind("satisfied")
+        .bind("Private review")
+        .execute(&pool)
+        .await
+        .expect("failed to insert test review");
+
+        let request = PluginRpcRequest {
+            plugin_id: ID.to_string(),
+            workspace_id: "lighthouse".to_string(),
+            method: "get_review".to_string(),
+            params: serde_json::json!({
+                "reviewId": review_id
+            }),
+        };
+
+        let result = dispatch(&pool, &other, request).await;
+
+        sqlx::query("DELETE FROM reviews WHERE id = $1")
+            .bind(review_id)
+            .execute(&pool)
+            .await
+            .expect("failed to clean up test review");
+
+        delete_test_user(&pool, owner_id).await;
+        delete_test_user(&pool, other_id).await;
+
+        let error = result.expect_err("another investor should not access the review");
+
+        assert_eq!(error.0, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn get_review_forbidden_for_company() {
+        let database_url =
+            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for integration tests");
+
+        let pool = PgPool::connect(&database_url)
+            .await
+            .expect("failed to connect to database");
+
+        let investor_id = "get-review-company-investor";
+        let review_id = "test-get-review-company-private";
+
+        create_test_investor(&pool, investor_id).await;
+
+        sqlx::query(
+            "INSERT INTO reviews
+            (id, workspace_id, user_id, criterion_id, status, opinion)
+         VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(review_id)
+        .bind("lighthouse")
+        .bind(investor_id)
+        .bind("business")
+        .bind("satisfied")
+        .bind("Private investor review")
+        .execute(&pool)
+        .await
+        .expect("failed to insert test review");
+
+        let company = test_user(UserRole::Company, "lighthouse");
+
+        let request = PluginRpcRequest {
+            plugin_id: ID.to_string(),
+            workspace_id: "lighthouse".to_string(),
+            method: "get_review".to_string(),
+            params: serde_json::json!({
+                "reviewId": review_id
+            }),
+        };
+
+        let result = dispatch(&pool, &company, request).await;
+
+        sqlx::query("DELETE FROM reviews WHERE id = $1")
+            .bind(review_id)
+            .execute(&pool)
+            .await
+            .expect("failed to clean up test review");
+
+        delete_test_user(&pool, investor_id).await;
+
+        let error = result.expect_err("company should not access investor review");
+
+        assert_eq!(error.0, StatusCode::FORBIDDEN);
     }
 }

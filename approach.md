@@ -1468,3 +1468,35 @@ Tests cover:
 Verification:
 - `cargo test review`
 - Result: 9 passed, 0 failed.
+
+
+### Review Plugin Review Detail and Privacy
+
+The Review Plugin `get_review` operation retrieves the authenticated investor's own review and the evidence linked to that review.
+
+The operation is restricted to investors. Company users are rejected before request parameter validation because investor reviews are private.
+
+Review lookup is scoped by:
+- review ID;
+- authenticated workspace ID;
+- authenticated user ID.
+
+This means an investor cannot retrieve another investor's review, even when the review ID is known. Missing reviews and reviews belonging to another investor return `404` rather than revealing whether the review exists.
+
+The review detail joins the fixed review criterion so the response includes the criterion title and review question. Linked evidence is also hydrated from the `materials` table and returned with its ID, title, file name, and status.
+
+The evidence join is additionally constrained to the review's workspace so a cross-workspace material cannot be exposed even if inconsistent database state exists.
+
+The existing review ID and timestamps are returned unchanged. This will also allow the later save operation to preserve the review identity when an investor edits an existing review.
+
+Tests were added for:
+- retrieving the authenticated investor's own review with evidence;
+- returning `404` for a missing review;
+- returning `404` when another investor attempts to access a review;
+- returning `403` when a company user attempts to access an investor review.
+
+Verification:
+- `cargo test get_review`
+- Result: 4 passed, 0 failed.
+- `cargo check --locked`
+- Result: passed.
