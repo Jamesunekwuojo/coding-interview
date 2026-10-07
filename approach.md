@@ -1626,3 +1626,83 @@ Verification after the refactor:
 Two possible future improvements were identified during the review: sharing the duplicated Review Detail response hydration logic between `get_review` and `save_review`, and batching evidence inserts. These were intentionally left out because they are optimizations rather than requirements, and introducing them at this stage would increase refactor scope without improving the assignment outcome.
 
 The result is a cleaner backend structure while preserving the existing security, API contracts, persistence behavior, and tests.
+
+
+
+### Frontend Architecture Review and UI Plan
+
+Before implementing the frontend business screens, I reviewed the existing frontend architecture and Plugin runtime to understand the intended extension points and communication boundaries.
+
+The existing application uses a host-and-plugin architecture:
+
+- the DataRoom is rendered by the host application;
+- the Review functionality is loaded as a Plugin;
+- Plugins receive a `PluginContext` containing the authenticated user, workspace, locale, and location;
+- Plugins communicate with the backend through the provided `PluginHost.call()` interface;
+- DataRoom operations are exposed through the DataRoom RPC target;
+- Review operations are exposed through the Review Plugin RPC target.
+
+I will keep these responsibilities separate.
+
+The DataRoom UI will call the existing `dataroomRpcHandler` directly because it is part of the host application.
+
+The Review Plugin will use `host.call()` for its own Review RPC operations. When the Review Plugin needs materials for evidence selection, it will use:
+
+```ts
+host.call("list_materials", null, { target: "dataroom" })
+```
+
+This keeps material ownership inside the DataRoom while allowing the Review Plugin to consume the data through the existing Plugin Host boundary.
+
+The frontend will reuse the existing React Query setup, `scopedKey` cache-key convention, UI kit components, design tokens, and localization system. No new state-management library, HTTP client, backend endpoint, or database migration is required.
+
+The UI implementation will be developed incrementally:
+
+1. DataRoom materials list, search, detail, and company-only material registration.
+2. Review Plugin progress and criteria views.
+3. Review creation/editing with evidence selection.
+4. Role-based restrictions and complete loading, error, empty, and success states.
+5. Playwright end-to-end tests covering the complete business flow.
+
+The UI will reflect the backend authorization rules rather than relying only on backend rejection. Company users will not be shown investor review functionality, and investors will not be shown the material registration action.
+
+The implementation will prioritize the required business flow and existing architecture rather than introducing additional abstractions.
+
+
+### DataRoom Materials UI Implementation
+
+The first frontend milestone implemented the DataRoom materials workflow using the existing host application architecture.
+
+The DataRoom UI now supports:
+
+- listing materials within the authenticated workspace;
+- searching materials through the existing `list_materials` RPC operation;
+- displaying material status (`ready`, `processing`, and `failed`);
+- opening a material detail view through the existing `get_material` operation;
+- company-only material registration through `register_material`;
+- appropriate loading, error, empty, and search-empty states.
+
+The material list uses React Query with the search value included in the query key:
+
+`["dataroom", workspaceId, "materials", search]`
+
+This prevents different searches from incorrectly sharing the same cached result. After a successful material registration, the relevant DataRoom material queries are invalidated so the new material appears without a page reload.
+
+Material content is loaded only when a user opens a specific material. The list uses the summary projection and does not fetch full material content for every item.
+
+The registration form is available only to authenticated company users. The frontend uses the authenticated session to control the user experience, but does not send user identity or role as client-controlled authorization data. Backend authorization remains the final security boundary.
+
+The registration form validates the supported `.txt` and `.md` file types and performs an early client-side size check. The backend remains responsible for enforcing the actual request-size and authorization constraints.
+
+Registration failures preserve the user's entered title and selected file so the user can correct the problem and retry without losing their input. Successful registration clears the form, closes the registration interface, and invalidates the material list.
+
+The UI reuses the existing UI kit, React Query setup, localization system, and design tokens. No new state-management library, HTTP client, API endpoint, database migration, or frontend dependency was introduced.
+
+Verification:
+- `pnpm typecheck` passed;
+- `pnpm lint` passed;
+- `pnpm build` passed;
+- `cargo test` passed: 37 tests;
+- `cargo check --locked` passed.
+
+The implementation was intentionally kept within the DataRoom milestone. Review Plugin UI and Playwright end-to-end tests remain separate future milestones.
