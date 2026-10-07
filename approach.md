@@ -1803,3 +1803,51 @@ Verification:
 - only `plugins/review/ui/app.tsx` was changed for the runtime integration fix.
 
 Playwright end-to-end testing remains the next frontend milestone.
+
+
+### UI Checkpoint 4: Role-Based Experience and UI Consistency Inspection
+
+The fourth frontend milestone was an inspection-only review of the completed DataRoom and Review Plugin UI. No code changes were required.
+
+The inspection verified the role boundaries required by the assignment.
+
+For company users:
+
+- DataRoom material listing, search, detail viewing, and material registration are available.
+- Material registration is only rendered for company users.
+- The Review Plugin displays a clear restriction message because investor reviews are private.
+- Investor-only Review Plugin queries are disabled for company users, so unnecessary authorization failures are avoided.
+- Company users cannot see investor progress, reviews, review creation/editing controls, or evidence selection.
+
+For investor users:
+
+- DataRoom materials can be viewed and searched, but material registration is not available.
+- Personal review progress is available.
+- Investors can create and edit their own reviews.
+- Evidence is loaded through the existing Plugin Host boundary from the DataRoom.
+- Only materials with `ready` status can be selected as evidence.
+- `processing` and `failed` materials cannot be selected.
+- Review details include the criterion, question, status, opinion, timestamps, and linked evidence.
+
+The inspection also verified frontend data isolation.
+
+Review Plugin React Query keys include both the authenticated user ID and workspace ID. The Plugin is also mounted with a user/workspace-specific React key, and each Plugin instance receives its own React Query client. This prevents review state from being incorrectly reused between investors or workspaces.
+
+The UI was also checked for consistency with the existing application architecture. The implementation uses the existing UI kit, design tokens, localization system, accessibility patterns, and responsive layout conventions.
+
+Loading, error, empty, and success states were reviewed. Form state is preserved when mutations fail, allowing users to correct the input and retry.
+
+No bugs, requirement violations, unnecessary dependencies, or architectural changes were identified during this checkpoint.
+
+No files were changed during this checkpoint.
+
+The UI is therefore considered ready for browser-level end-to-end testing.
+
+Verification:
+- inspection completed without code changes;
+- role-based rendering and query gating verified;
+- investor/workspace query isolation verified;
+- responsive and accessibility behavior reviewed;
+- Playwright test scenarios defined for the next milestone.
+
+The next milestone is the Playwright end-to-end test suite covering the complete DataRoom → evidence → review → progress workflow.
