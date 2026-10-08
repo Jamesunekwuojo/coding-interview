@@ -2,13 +2,20 @@
 
 ## 1. Purpose of This Document
 
-This document explains how I approached the DataRoom coding assignment before starting the main implementation.
+This document explains how I approached the DataRoom coding assignment
+before starting the main implementation.
 
-The goal is not only to describe what I plan to build, but also to document how I understood the existing codebase, how I investigated the development environment, the problems I encountered, the decisions I made, and the reasoning behind those decisions.
+The goal is not only to describe what I plan to build, but also to
+document how I understood the existing codebase, how I investigated the
+development environment, the problems I encountered, the decisions I
+made, and the reasoning behind those decisions.
 
-I am treating the assignment as an existing product that needs to be completed rather than as a greenfield application. Because of that, my first step was to understand the architecture and the boundaries already established by the repository before introducing new code.
+I am treating the assignment as an existing product that needs to be
+completed rather than as a greenfield application. Because of that, my
+first step was to understand the architecture and the boundaries already
+established by the repository before introducing new code.
 
----
+------------------------------------------------------------------------
 
 # 2. My Understanding of the Assignment
 
@@ -16,59 +23,69 @@ This repository provides a partially implemented DataRoom application.
 
 The main workflow I need to complete is:
 
-1. Materials are registered in the DataRoom.
-2. Materials can be viewed and searched.
-3. Reviews are created for investors against predefined review criteria.
-4. Evidence materials are attached to reviews.
-5. Reviews can be edited without creating a new review record.
-6. Review progress is calculated from the completed review criteria.
-7. Access is restricted according to the authenticated user, role, and workspace.
+1.  Materials are registered in the DataRoom.
+2.  Materials can be viewed and searched.
+3.  Reviews are created for investors against predefined review
+    criteria.
+4.  Evidence materials are attached to reviews.
+5.  Reviews can be edited without creating a new review record.
+6.  Review progress is calculated from the completed review criteria.
+7.  Access is restricted according to the authenticated user, role, and
+    workspace.
 
 The important boundary in the application is the workspace.
 
-For this assignment, the existing `lighthouse` workspace represents the DataRoom boundary. Users must not be able to access or modify resources belonging to another workspace.
+For this assignment, the existing `lighthouse` workspace represents the
+DataRoom boundary. Users must not be able to access or modify resources
+belonging to another workspace.
 
-The repository already provides much of the infrastructure needed for this work, including:
+The repository already provides much of the infrastructure needed for
+this work, including:
 
-- authentication and sessions
-- the React host application
-- the plugin system
-- the Review Plugin structure
-- the API communication layer
-- generated TypeScript API types
-- the Axum API
-- PostgreSQL and SQLx
-- the existing database migration structure
-- shared UI components
+-   authentication and sessions
+-   the React host application
+-   the plugin system
+-   the Review Plugin structure
+-   the API communication layer
+-   generated TypeScript API types
+-   the Axum API
+-   PostgreSQL and SQLx
+-   the existing database migration structure
+-   shared UI components
 
-The missing work is therefore mainly the actual DataRoom business functionality and the Review Plugin functionality.
+The missing work is therefore mainly the actual DataRoom business
+functionality and the Review Plugin functionality.
 
----
+------------------------------------------------------------------------
 
 # 3. Initial Repository Reconnaissance
 
-Before writing business logic, I inspected the repository structure and the existing implementation.
+Before writing business logic, I inspected the repository structure and
+the existing implementation.
 
 The main areas I looked at were:
 
-- `api/`
-- `web/`
-- `plugins/`
-- `plugin-sdk/`
-- `api-client/`
-- `ui-kit/`
-- `scripts/`
-- database migrations
-- authentication/session handling
-- RPC request and response structures
-- plugin loading and routing
-- generated TypeScript API code
+-   `api/`
+-   `web/`
+-   `plugins/`
+-   `plugin-sdk/`
+-   `api-client/`
+-   `ui-kit/`
+-   `scripts/`
+-   database migrations
+-   authentication/session handling
+-   RPC request and response structures
+-   plugin loading and routing
+-   generated TypeScript API code
 
-This was important because I did not want to introduce another API pattern, another authentication mechanism, or another way of communicating between the host application and plugins when the repository already has established conventions.
+This was important because I did not want to introduce another API
+pattern, another authentication mechanism, or another way of
+communicating between the host application and plugins when the
+repository already has established conventions.
 
 The existing architecture can be summarized as:
 
-```text
+``` text
 Browser
    |
    v
@@ -90,87 +107,109 @@ DataRoom RPC        Plugin RPC
         PostgreSQL
 ```
 
-The plugin system and generated API client are already part of the application architecture, so the implementation should extend those systems rather than bypass them.
+The plugin system and generated API client are already part of the
+application architecture, so the implementation should extend those
+systems rather than bypass them.
 
----
+------------------------------------------------------------------------
 
 # 4. Development Environment Investigation
 
 Getting the project running was part of the initial investigation.
 
-The first `make dev` attempt did not start successfully. The API container reported:
+The first `make dev` attempt did not start successfully. The API
+container reported:
 
-```text
+``` text
 error: could not find Cargo.toml in /app/api
 ```
 
-At first this looked like a Docker mount or repository-path problem because the `Cargo.toml` file was present on the host.
+At first this looked like a Docker mount or repository-path problem
+because the `Cargo.toml` file was present on the host.
 
-I checked the Docker Compose configuration and confirmed that the repository's `api` directory was supposed to be mounted into `/app/api`.
+I checked the Docker Compose configuration and confirmed that the
+repository's `api` directory was supposed to be mounted into `/app/api`.
 
-The next check showed that the container could see the directory but could not access it properly.
+The next check showed that the container could see the directory but
+could not access it properly.
 
-The host machine is running Fedora with SELinux enforcing. The repository files had the host SELinux context:
+The host machine is running Fedora with SELinux enforcing. The
+repository files had the host SELinux context:
 
-```text
+``` text
 user_home_t
 ```
 
-while the container needed a context that allowed the container to access the bind-mounted files.
+while the container needed a context that allowed the container to
+access the bind-mounted files.
 
 I therefore applied the appropriate container SELinux label:
 
-```bash
+``` bash
 sudo chcon -Rt container_file_t .
 ```
 
-After this change, the API container could access `Cargo.toml` and the Rust application started successfully.
+After this change, the API container could access `Cargo.toml` and the
+Rust application started successfully.
 
 The API eventually reached:
 
-```text
+``` text
 Dataroom API: http://0.0.0.0:4318
 ```
 
-This was an important finding because the original problem was not a missing Rust file or an incorrect Cargo configuration. It was an environment/SELinux permission issue affecting the Docker bind mount.
+This was an important finding because the original problem was not a
+missing Rust file or an incorrect Cargo configuration. It was an
+environment/SELinux permission issue affecting the Docker bind mount.
 
----
+------------------------------------------------------------------------
 
 # 5. Web Container Investigation
 
-After fixing the API container, the web container exposed another environment issue.
+After fixing the API container, the web container exposed another
+environment issue.
 
-The web container failed during dependency installation with an error involving:
+The web container failed during dependency installation with an error
+involving:
 
-```text
+``` text
 /app/ui-kit/node_modules
 ```
 
-The repository uses a pnpm workspace containing the main web application and the shared `ui-kit` package.
+The repository uses a pnpm workspace containing the main web application
+and the shared `ui-kit` package.
 
-The important discovery was that the `ui-kit` directory was mounted read-only into the container.
+The important discovery was that the `ui-kit` directory was mounted
+read-only into the container.
 
-I confirmed this directly by attempting to write into the directory from the container. The filesystem returned:
+I confirmed this directly by attempting to write into the directory from
+the container. The filesystem returned:
 
-```text
+``` text
 Read-only file system
 ```
 
-This explained why pnpm could not create the workspace's `node_modules` directory.
+This explained why pnpm could not create the workspace's `node_modules`
+directory.
 
-I initially considered adding another Docker volume for the `node_modules` directory, but Docker could not create that mount point underneath the read-only parent mount.
+I initially considered adding another Docker volume for the
+`node_modules` directory, but Docker could not create that mount point
+underneath the read-only parent mount.
 
-I then tested pnpm's hoisted node linker without changing the project's dependency declarations:
+I then tested pnpm's hoisted node linker without changing the project's
+dependency declarations:
 
-```bash
+``` bash
 pnpm install --node-linker=hoisted
 ```
 
 The installation completed successfully.
 
-Because this solved the workspace installation problem without changing the application's dependency graph, I made the corresponding change to `scripts/web-container.sh` by adding:
+Because this solved the workspace installation problem without changing
+the application's dependency graph, I made the corresponding change to
+`scripts/web-container.sh` by adding:
 
-```text
+``` text
 --node-linker=hoisted
 ```
 
@@ -178,28 +217,37 @@ to the existing pnpm install command.
 
 This allowed the complete development environment to start successfully.
 
----
+------------------------------------------------------------------------
 
 # 6. What I Learned From the Environment Issues
 
-These problems changed my understanding of the repository in a useful way.
+These problems changed my understanding of the repository in a useful
+way.
 
-The first failure looked like an application problem, but it was actually caused by the host/container security boundary.
+The first failure looked like an application problem, but it was
+actually caused by the host/container security boundary.
 
-The second failure looked like a pnpm dependency problem, but it was actually caused by the combination of:
+The second failure looked like a pnpm dependency problem, but it was
+actually caused by the combination of:
 
-- pnpm workspace packages
-- Docker bind mounts
-- read-only package mounts
-- where pnpm expected to create workspace dependencies
+-   pnpm workspace packages
+-   Docker bind mounts
+-   read-only package mounts
+-   where pnpm expected to create workspace dependencies
 
-I am documenting these issues because they are part of the actual implementation experience and because the assignment specifically asks for the development/environment response time to be distinguished from the actual implementation time.
+I am documenting these issues because they are part of the actual
+implementation experience and because the assignment specifically asks
+for the development/environment response time to be distinguished from
+the actual implementation time.
 
-The initial environment troubleshooting took significantly longer than expected. The first `make dev` attempt ran for roughly 10 minutes before timing out.
+The initial environment troubleshooting took significantly longer than
+expected. The first `make dev` attempt remained running for
+approximately 30 minutes and 21 seconds before timing out.
 
-I will record the final implementation time separately once the business functionality is complete.
+I will record the final implementation time separately once the business
+functionality is complete.
 
----
+------------------------------------------------------------------------
 
 # 7. Current Development Environment
 
@@ -207,7 +255,7 @@ The development environment is now operational.
 
 The web application is available through the exposed web port:
 
-```text
+``` text
 http://localhost:5178
 ```
 
@@ -217,51 +265,62 @@ The API port is not currently published directly to the host.
 
 This means a request such as:
 
-```bash
+``` bash
 curl http://localhost:4318/api/health
 ```
 
-from the host machine is expected to fail because port `4318` is not exposed to the host.
+from the host machine is expected to fail because port `4318` is not
+exposed to the host.
 
-The web container can communicate with the API using the internal Docker address:
+The web container can communicate with the API using the internal Docker
+address:
 
-```text
+``` text
 http://api:4318
 ```
 
-This is consistent with the existing Compose architecture, so I do not currently plan to expose the API port to the host unless development or testing later proves that it is necessary.
+This is consistent with the existing Compose architecture, so I do not
+currently plan to expose the API port to the host unless development or
+testing later proves that it is necessary.
 
-The application can now be started and accessed through the normal development flow.
+The application can now be started and accessed through the normal
+development flow.
 
----
+------------------------------------------------------------------------
 
 # 8. What Already Exists
 
-The repository already contains several important pieces that I should not rebuild.
+The repository already contains several important pieces that I should
+not rebuild.
 
 ### Authentication and Sessions
 
 The application already has authentication/session handling.
 
-The business implementation should use the authenticated identity supplied by the server rather than accepting identity information from the browser.
+The business implementation should use the authenticated identity
+supplied by the server rather than accepting identity information from
+the browser.
 
 ### Plugin Architecture
 
 The repository already has a plugin loader and plugin host.
 
-The Review Plugin should therefore remain a plugin instead of being turned into a separate application.
+The Review Plugin should therefore remain a plugin instead of being
+turned into a separate application.
 
 ### RPC Communication
 
 The API already uses RPC-style request dispatching.
 
-The new DataRoom and Review functionality should follow the existing RPC conventions rather than introducing REST endpoints unnecessarily.
+The new DataRoom and Review functionality should follow the existing RPC
+conventions rather than introducing REST endpoints unnecessarily.
 
 ### Generated TypeScript API
 
 The repository already has a Rust-to-TypeScript generation process.
 
-The Rust API types should remain the source of truth, and the TypeScript client should be generated from them.
+The Rust API types should remain the source of truth, and the TypeScript
+client should be generated from them.
 
 I should not manually maintain duplicate API types in the frontend.
 
@@ -269,21 +328,25 @@ I should not manually maintain duplicate API types in the frontend.
 
 The project already uses PostgreSQL with SQLx migrations.
 
-The required business tables should therefore be added through the existing migration mechanism.
+The required business tables should therefore be added through the
+existing migration mechanism.
 
----
+------------------------------------------------------------------------
 
 # 9. Business Model I Intend to Implement
 
-After studying the assignment requirements and the existing architecture, I expect the required domain model to consist of three main tables.
+After studying the assignment requirements and the existing
+architecture, I expect the required domain model to consist of three
+main tables.
 
 ## Materials
 
-Materials belong to a workspace and represent the evidence that can later be attached to reviews.
+Materials belong to a workspace and represent the evidence that can
+later be attached to reviews.
 
 Conceptually:
 
-```text
+``` text
 materials
 -----------
 id
@@ -299,7 +362,7 @@ updated_at
 
 The material status is expected to support:
 
-```text
+``` text
 ready
 processing
 failed
@@ -307,23 +370,30 @@ failed
 
 The assignment requires evidence attached to reviews to be `ready`.
 
-There is currently no separate asynchronous processing pipeline in the skeleton that would justify allowing the browser to control this state.
+There is currently no separate asynchronous processing pipeline in the
+skeleton that would justify allowing the browser to control this state.
 
-Therefore, when a material is registered through the current implementation, the server should determine its initial status rather than trusting a status supplied by the client.
+Therefore, when a material is registered through the current
+implementation, the server should determine its initial status rather
+than trusting a status supplied by the client.
 
-For the current synchronous implementation, a newly registered material can start as `ready`.
+For the current synchronous implementation, a newly registered material
+can start as `ready`.
 
-The database should still support the other statuses because the assignment explicitly defines them and because they are relevant to evidence validation.
+The database should still support the other statuses because the
+assignment explicitly defines them and because they are relevant to
+evidence validation.
 
----
+------------------------------------------------------------------------
 
 # 10. Reviews
 
-A review represents an investor's assessment against one review criterion.
+A review represents an investor's assessment against one review
+criterion.
 
 Conceptually:
 
-```text
+``` text
 reviews
 --------
 id
@@ -338,30 +408,33 @@ updated_at
 
 The review status is:
 
-```text
+``` text
 satisfied
 needs_information
 ```
 
-The same investor should not have multiple reviews for the same criterion.
+The same investor should not have multiple reviews for the same
+criterion.
 
 Therefore, the database should enforce uniqueness around:
 
-```text
+``` text
 workspace_id + criterion_id + user_id
 ```
 
-When a review is edited, the existing review record should be updated rather than creating another review.
+When a review is edited, the existing review record should be updated
+rather than creating another review.
 
----
+------------------------------------------------------------------------
 
 # 11. Review Evidence
 
-Evidence represents the relationship between a review and the materials supporting that review.
+Evidence represents the relationship between a review and the materials
+supporting that review.
 
 Conceptually:
 
-```text
+``` text
 review_evidence
 ---------------
 review_id
@@ -370,35 +443,41 @@ material_id
 
 The pair:
 
-```text
+``` text
 review_id + material_id
 ```
 
 should be unique.
 
-This prevents the same material from being attached to the same review more than once.
+This prevents the same material from being attached to the same review
+more than once.
 
-The database foreign keys can guarantee that the referenced records exist, but they cannot by themselves guarantee that the review and material belong to the same workspace.
+The database foreign keys can guarantee that the referenced records
+exist, but they cannot by themselves guarantee that the review and
+material belong to the same workspace.
 
-That workspace relationship therefore needs to be validated in the application/service layer before the transaction is committed.
+That workspace relationship therefore needs to be validated in the
+application/service layer before the transaction is committed.
 
----
+------------------------------------------------------------------------
 
 # 12. API Design
 
-I want the API surface to remain small and focused on what the UI actually needs.
+I want the API surface to remain small and focused on what the UI
+actually needs.
 
 For the DataRoom, the expected operations are along the lines of:
 
-```text
+``` text
 list_materials
 get_material
 register_material
 ```
 
-The material registration request should contain the actual material information, such as:
+The material registration request should contain the actual material
+information, such as:
 
-```text
+``` text
 title
 fileName
 content
@@ -406,17 +485,18 @@ content
 
 It should not contain:
 
-```text
+``` text
 userId
 workspaceId
 status
 ```
 
-Those values are either derived from the authenticated request or determined by the server.
+Those values are either derived from the authenticated request or
+determined by the server.
 
 For reviews, the expected operations are:
 
-```text
+``` text
 list_criteria
 get_summary
 list_reviews
@@ -424,9 +504,10 @@ get_review
 save_review
 ```
 
-The review save operation should receive the review information and evidence material IDs, for example:
+The review save operation should receive the review information and
+evidence material IDs, for example:
 
-```text
+``` text
 criterionId
 status
 opinion
@@ -435,17 +516,19 @@ evidenceMaterialIds
 
 The authenticated user and workspace should be derived on the server.
 
-The exact final RPC names and request/response shapes will be confirmed against the repository's existing conventions before implementation.
+The exact final RPC names and request/response shapes will be confirmed
+against the repository's existing conventions before implementation.
 
----
+------------------------------------------------------------------------
 
 # 13. Authorization Approach
 
-Security is one of the areas I want to get right before focusing on the UI.
+Security is one of the areas I want to get right before focusing on the
+UI.
 
 The basic request flow should be:
 
-```text
+``` text
 Authentication
       ↓
 Workspace authorization
@@ -461,25 +544,28 @@ Database operation
 
 The server should never trust the browser to tell it:
 
-- which user is making the request
-- which workspace the request belongs to
-- which role the user has
+-   which user is making the request
+-   which workspace the request belongs to
+-   which role the user has
 
-Those values must come from the authenticated session/server-side context.
+Those values must come from the authenticated session/server-side
+context.
 
 The workspace is the main tenant boundary.
 
-For example, when attaching evidence to a review, it is not enough to check that the material ID exists.
+For example, when attaching evidence to a review, it is not enough to
+check that the material ID exists.
 
 The server must also confirm that the material:
 
-1. belongs to the current workspace,
-2. is in the required `ready` state,
-3. is not duplicated in the evidence list.
+1.  belongs to the current workspace,
+2.  is in the required `ready` state,
+3.  is not duplicated in the evidence list.
 
-Unauthorized access should be rejected before performing unnecessary domain-level validation.
+Unauthorized access should be rejected before performing unnecessary
+domain-level validation.
 
----
+------------------------------------------------------------------------
 
 # 14. Material Validation
 
@@ -487,45 +573,55 @@ Material registration will follow the assignment's requirements.
 
 The important validation rules include:
 
-- title is required
-- filename is required
-- only the required `.txt` and `.md` file types are accepted
-- content is UTF-8 text
-- the request must remain within the assignment's request-size limit
-- the material belongs to the authenticated workspace
-- the uploader is derived from the authenticated user
+-   title is required
+-   filename is required
+-   only the required `.txt` and `.md` file types are accepted
+-   content is UTF-8 text
+-   the request must remain within the assignment's request-size limit
+-   the material belongs to the authenticated workspace
+-   the uploader is derived from the authenticated user
 
-I do not want to introduce an arbitrary smaller content limit simply because it is convenient to implement.
+I do not want to introduce an arbitrary smaller content limit simply
+because it is convenient to implement.
 
-The assignment specifies a request limit of `256 KiB`, so I will avoid inventing a different business limit unless the existing repository conventions require one.
+The assignment specifies a request limit of `256 KiB`, so I will avoid
+inventing a different business limit unless the existing repository
+conventions require one.
 
-I will also keep the distinction between the HTTP/request-size limit and PostgreSQL text storage clear. They are not the same thing.
+I will also keep the distinction between the HTTP/request-size limit and
+PostgreSQL text storage clear. They are not the same thing.
 
----
+------------------------------------------------------------------------
 
 # 15. Material Search
 
 The material list needs to support searching.
 
-The initial implementation can use a parameterized PostgreSQL query with `ILIKE`.
+The initial implementation can use a parameterized PostgreSQL query with
+`ILIKE`.
 
-For example, the search can match against fields such as the material title and filename.
+For example, the search can match against fields such as the material
+title and filename.
 
-I will not claim that a normal B-tree index automatically makes a query such as:
+I will not claim that a normal B-tree index automatically makes a query
+such as:
 
-```sql
+``` sql
 ILIKE '%term%'
 ```
 
 efficient.
 
-If the assignment remains small, the straightforward query is sufficient.
+If the assignment remains small, the straightforward query is
+sufficient.
 
-If the project later grows enough to require optimized substring search, PostgreSQL features such as `pg_trgm` could be considered separately.
+If the project later grows enough to require optimized substring search,
+PostgreSQL features such as `pg_trgm` could be considered separately.
 
-For this assignment, I prefer the simpler implementation unless the existing requirements justify additional complexity.
+For this assignment, I prefer the simpler implementation unless the
+existing requirements justify additional complexity.
 
----
+------------------------------------------------------------------------
 
 # 16. Review Validation
 
@@ -533,7 +629,7 @@ Saving a review should be treated as one business operation.
 
 The validation sequence I intend to follow is approximately:
 
-```text
+``` text
 1. Authenticate the request
 2. Determine the current workspace
 3. Confirm the required role
@@ -551,43 +647,49 @@ The validation sequence I intend to follow is approximately:
 15. Commit the transaction
 ```
 
-The important part is that the review update and evidence replacement must happen in the same transaction.
+The important part is that the review update and evidence replacement
+must happen in the same transaction.
 
-If anything fails, the existing review and its existing evidence should remain unchanged.
+If anything fails, the existing review and its existing evidence should
+remain unchanged.
 
-This prevents a situation where the review is updated successfully but the evidence update fails halfway through.
+This prevents a situation where the review is updated successfully but
+the evidence update fails halfway through.
 
----
+------------------------------------------------------------------------
 
 # 17. Progress Calculation
 
 The Review Plugin needs to show progress for the investor.
 
-The assignment defines a review as completed when its status has been submitted, including:
+The assignment defines a review as completed when its status has been
+submitted, including:
 
-```text
+``` text
 satisfied
 needs_information
 ```
 
 Therefore:
 
-```text
+``` text
 completed = number of criteria with a saved review
 remaining = total criteria - completed
 ```
 
-Progress should be calculated for the authenticated investor rather than accepting an arbitrary user ID from the client.
+Progress should be calculated for the authenticated investor rather than
+accepting an arbitrary user ID from the client.
 
-The exact UI representation will follow the existing Review Plugin structure.
+The exact UI representation will follow the existing Review Plugin
+structure.
 
----
+------------------------------------------------------------------------
 
 # 18. Architecture Decisions
 
 At this point, my intended architecture is:
 
-```text
+``` text
                     Browser
                        |
                        v
@@ -618,51 +720,52 @@ Owns materials and material-related operations.
 
 Owns:
 
-- criteria
-- reviews
-- review evidence
-- review progress
+-   criteria
+-   reviews
+-   review evidence
+-   review progress
 
 ### API
 
 Owns:
 
-- authentication context
-- authorization
-- validation
-- business rules
-- database operations
+-   authentication context
+-   authorization
+-   validation
+-   business rules
+-   database operations
 
 ### PostgreSQL
 
 Owns:
 
-- persistence
-- foreign-key relationships
-- uniqueness constraints
-- appropriate database-level integrity rules
+-   persistence
+-   foreign-key relationships
+-   uniqueness constraints
+-   appropriate database-level integrity rules
 
 ### Frontend
 
 Owns:
 
-- user interaction
-- form state
-- display state
-- query caching
-- presenting server responses
+-   user interaction
+-   form state
+-   display state
+-   query caching
+-   presenting server responses
 
 The frontend should not become the source of truth for business rules.
 
----
+------------------------------------------------------------------------
 
 # 19. Generated TypeScript
 
-The generated API types are an important part of the existing architecture.
+The generated API types are an important part of the existing
+architecture.
 
 The intended flow is:
 
-```text
+``` text
 Rust API types
       ↓
 ts-rs / generation
@@ -672,27 +775,35 @@ generated TypeScript
 React application
 ```
 
-I will therefore avoid manually duplicating Rust request/response types in TypeScript.
+I will therefore avoid manually duplicating Rust request/response types
+in TypeScript.
 
-After changing the Rust API contracts, I will regenerate the TypeScript API client/types and make the frontend consume the generated definitions.
+After changing the Rust API contracts, I will regenerate the TypeScript
+API client/types and make the frontend consume the generated
+definitions.
 
-This should reduce the chance of the backend and frontend silently disagreeing about request or response shapes.
+This should reduce the chance of the backend and frontend silently
+disagreeing about request or response shapes.
 
----
+------------------------------------------------------------------------
 
 # 20. React Query
 
 The frontend already uses React Query.
 
-The new queries and mutations should follow that pattern instead of introducing another client-side state management mechanism.
+The new queries and mutations should follow that pattern instead of
+introducing another client-side state management mechanism.
 
-Query keys should contain the relevant identity/tenant information where appropriate.
+Query keys should contain the relevant identity/tenant information where
+appropriate.
 
-For example, a material query should not accidentally reuse cached data from another authenticated context.
+For example, a material query should not accidentally reuse cached data
+from another authenticated context.
 
-After mutations, the relevant queries should be invalidated or updated so that the UI reflects the new server state.
+After mutations, the relevant queries should be invalidated or updated
+so that the UI reflects the new server state.
 
----
+------------------------------------------------------------------------
 
 # 21. What I Am Deliberately Not Adding
 
@@ -700,44 +811,50 @@ I want to keep the implementation proportional to the assignment.
 
 At this stage I do not plan to introduce:
 
-- REST endpoints alongside the existing RPC architecture
-- GraphQL
-- Redis
-- S3/object storage
-- background workers
-- a search engine
-- WebSockets
-- CQRS
-- event sourcing
-- a separate service for reviews
-- an AI review system
+-   REST endpoints alongside the existing RPC architecture
+-   GraphQL
+-   Redis
+-   S3/object storage
+-   background workers
+-   a search engine
+-   WebSockets
+-   CQRS
+-   event sourcing
+-   a separate service for reviews
+-   an AI review system
 
-The assignment can be completed using the architecture already provided by the repository.
+The assignment can be completed using the architecture already provided
+by the repository.
 
-Adding infrastructure that does not solve a stated requirement would increase complexity and make the implementation harder to explain.
+Adding infrastructure that does not solve a stated requirement would
+increase complexity and make the implementation harder to explain.
 
----
+------------------------------------------------------------------------
 
 # 22. AI-Assisted Investigation
 
-I used AI during the reconnaissance phase, but I did not treat the generated architecture proposal as automatically correct.
+I used AI during the reconnaissance phase, but I did not treat the
+generated architecture proposal as automatically correct.
 
-One of the AI-assisted tasks was an architecture audit of the existing repository.
+One of the AI-assisted tasks was an architecture audit of the existing
+repository.
 
 The AI was asked to inspect the existing architecture and identify:
 
-- what is already implemented
-- what is missing
-- possible database structures
-- API boundaries
-- plugin responsibilities
-- security concerns
-- testing requirements
-- implementation risks
+-   what is already implemented
+-   what is missing
+-   possible database structures
+-   API boundaries
+-   plugin responsibilities
+-   security concerns
+-   testing requirements
+-   implementation risks
 
-The resulting audit was then compared against my own inspection of the repository.
+The resulting audit was then compared against my own inspection of the
+repository.
 
-This comparison was important because some suggestions were useful while others needed modification.
+This comparison was important because some suggestions were useful while
+others needed modification.
 
 For example:
 
@@ -745,86 +862,95 @@ For example:
 
 The audit correctly identified the importance of:
 
-- keeping the Review functionality inside the plugin architecture
-- using generated TypeScript types
-- enforcing workspace boundaries
-- using database constraints for uniqueness
-- using a transaction for review/evidence updates
-- testing cross-workspace access
-- testing duplicate evidence
-- testing invalid material states
+-   keeping the Review functionality inside the plugin architecture
+-   using generated TypeScript types
+-   enforcing workspace boundaries
+-   using database constraints for uniqueness
+-   using a transaction for review/evidence updates
+-   testing cross-workspace access
+-   testing duplicate evidence
+-   testing invalid material states
 
 ### Modified
 
 The AI suggested an additional `200 KiB` content restriction.
 
-I rejected that as an unnecessary invented constraint because the assignment specifies a request limit of `256 KiB`.
+I rejected that as an unnecessary invented constraint because the
+assignment specifies a request limit of `256 KiB`.
 
 I also modified the suggestion around material status.
 
-The client should not be allowed to choose whether a material is `ready`, `processing`, or `failed`. The server should determine that state.
+The client should not be allowed to choose whether a material is
+`ready`, `processing`, or `failed`. The server should determine that
+state.
 
-The AI audit also suggested indexing that could be interpreted as making `%term%` searches efficient. I rejected that assumption because a normal B-tree index does not automatically solve substring searches using:
+The AI audit also suggested indexing that could be interpreted as making
+`%term%` searches efficient. I rejected that assumption because a normal
+B-tree index does not automatically solve substring searches using:
 
-```sql
+``` sql
 ILIKE '%term%'
 ```
 
-These changes are important because they demonstrate that AI was used as an engineering assistant, not as a replacement for understanding the code or requirements.
+These changes are important because they demonstrate that AI was used as
+an engineering assistant, not as a replacement for understanding the
+code or requirements.
 
----
+------------------------------------------------------------------------
 
 # 23. Testing Strategy
 
-The repository does not provide a complete business-level test suite for the functionality being implemented.
+The repository does not provide a complete business-level test suite for
+the functionality being implemented.
 
-I therefore intend to build the tests alongside the implementation rather than leaving them until the end.
+I therefore intend to build the tests alongside the implementation
+rather than leaving them until the end.
 
 The backend tests should cover at least:
 
 ### Authentication and authorization
 
-- unauthenticated requests
-- wrong workspace
-- insufficient role
-- resource ownership/boundary checks
+-   unauthenticated requests
+-   wrong workspace
+-   insufficient role
+-   resource ownership/boundary checks
 
 ### Materials
 
-- successful registration
-- invalid title
-- invalid file type
-- invalid content
-- listing
-- searching
-- retrieving a material
-- workspace isolation
+-   successful registration
+-   invalid title
+-   invalid file type
+-   invalid content
+-   listing
+-   searching
+-   retrieving a material
+-   workspace isolation
 
 ### Reviews
 
-- creating a review
-- updating an existing review
-- duplicate review prevention
-- invalid status
-- empty/whitespace-only opinion
-- opinion length validation
+-   creating a review
+-   updating an existing review
+-   duplicate review prevention
+-   invalid status
+-   empty/whitespace-only opinion
+-   opinion length validation
 
 ### Evidence
 
-- valid evidence
-- no evidence
-- duplicate evidence IDs
-- nonexistent material
-- material from another workspace
-- processing material
-- failed material
-- mixed valid/invalid evidence
+-   valid evidence
+-   no evidence
+-   duplicate evidence IDs
+-   nonexistent material
+-   material from another workspace
+-   processing material
+-   failed material
+-   mixed valid/invalid evidence
 
 ### Transactions
 
 The important failure case is:
 
-```text
+``` text
 review update succeeds
         +
 evidence update fails
@@ -836,14 +962,15 @@ The previous review/evidence state should remain intact.
 
 ### Progress
 
-- no completed reviews
-- partially completed reviews
-- all criteria completed
-- `needs_information` counted as completed
+-   no completed reviews
+-   partially completed reviews
+-   all criteria completed
+-   `needs_information` counted as completed
 
-The frontend should also have Playwright coverage for the important user flows.
+The frontend should also have Playwright coverage for the important user
+flows.
 
----
+------------------------------------------------------------------------
 
 # 24. Implementation Order
 
@@ -851,229 +978,277 @@ I do not want to start by writing a large amount of code at once.
 
 The implementation will proceed in small checkpoints.
 
-## Step 1 — Confirm Existing Conventions
+## Step 1 --- Confirm Existing Conventions
 
 Before creating the migration, I will inspect the existing code for:
 
-- ID types
-- timestamp conventions
-- database error handling
-- migration naming
-- workspace/user relationships
-- existing SQLx patterns
-- RPC naming conventions
-- response/error conventions
+-   ID types
+-   timestamp conventions
+-   database error handling
+-   migration naming
+-   workspace/user relationships
+-   existing SQLx patterns
+-   RPC naming conventions
+-   response/error conventions
 
-This prevents the new code from looking foreign to the rest of the repository.
+This prevents the new code from looking foreign to the rest of the
+repository.
 
-## Step 2 — Database Migration
+## Step 2 --- Database Migration
 
 Create the required tables, relationships, constraints, and indexes.
 
 Then run the migration and verify the resulting schema.
 
-## Step 3 — DataRoom API
+## Step 3 --- DataRoom API
 
 Implement material registration, retrieval, listing, and search.
 
 Then generate the corresponding TypeScript API definitions.
 
-## Step 4 — Review API
+## Step 4 --- Review API
 
-Implement criteria, review creation/update, evidence handling, and progress.
+Implement criteria, review creation/update, evidence handling, and
+progress.
 
 The review save operation will use a transaction.
 
-## Step 5 — DataRoom UI
+## Step 5 --- DataRoom UI
 
 Connect the existing DataRoom shell to the material API.
 
 Implement:
 
-- material registration
-- material listing
-- searching
-- material details
+-   material registration
+-   material listing
+-   searching
+-   material details
 
-## Step 6 — Review Plugin UI
+## Step 6 --- Review Plugin UI
 
 Connect the Review Plugin to the backend.
 
 Implement:
 
-- criteria
-- review form
-- evidence selection
-- review editing
-- progress
+-   criteria
+-   review form
+-   evidence selection
+-   review editing
+-   progress
 
-## Step 7 — Tests
+## Step 7 --- Tests
 
-Add backend tests and Playwright tests around the important business flows and security boundaries.
+Add backend tests and Playwright tests around the important business
+flows and security boundaries.
 
-## Step 8 — Security Review
+## Step 8 --- Security Review
 
 Review every new endpoint/RPC path for:
 
-- authentication
-- workspace authorization
-- role authorization
-- resource ownership
-- client-controlled identity
-- client-controlled status
-- cross-workspace evidence
+-   authentication
+-   workspace authorization
+-   role authorization
+-   resource ownership
+-   client-controlled identity
+-   client-controlled status
+-   cross-workspace evidence
 
-## Step 9 — Documentation
+## Step 9 --- Documentation
 
 Complete the required documentation, including:
 
-- setup/login/reset instructions
-- completed and incomplete scope
-- implementation/environment timing
-- design decisions
-- changed understanding
-- testing commands and results
-- limitations
-- AI usage examples and validation evidence
+-   setup/login/reset instructions
+-   completed and incomplete scope
+-   implementation/environment timing
+-   design decisions
+-   changed understanding
+-   testing commands and results
+-   limitations
+-   AI usage examples and validation evidence
 
----
+------------------------------------------------------------------------
 
-# 25. Current Status
+# 25. Initial Status Before Implementation
 
-At the point this document is being written:
+At the point this document was first written, before the main business
+implementation began:
 
 ### Completed
 
-- Repository structure inspected
-- Existing architecture inspected
-- Authentication/session flow inspected
-- Plugin architecture inspected
-- RPC architecture inspected
-- Generated TypeScript flow inspected
-- Database/migration structure inspected
-- Docker Compose environment investigated
-- SELinux bind-mount problem identified and resolved
-- Web workspace/pnpm problem identified and resolved
-- Development environment brought up successfully
-- Initial business/domain model defined
-- Initial API boundaries defined
-- Security model defined
-- AI architecture audit performed
-- AI recommendations independently reviewed
-- Architecture decisions recorded
+-   Repository structure inspected
+-   Existing architecture inspected
+-   Authentication/session flow inspected
+-   Plugin architecture inspected
+-   RPC architecture inspected
+-   Generated TypeScript flow inspected
+-   Database/migration structure inspected
+-   Docker Compose environment investigated
+-   SELinux bind-mount problem identified and resolved
+-   Web workspace/pnpm problem identified and resolved
+-   Development environment brought up successfully
+-   Initial business/domain model defined
+-   Initial API boundaries defined
+-   Security model defined
+-   AI architecture audit performed
+-   AI recommendations independently reviewed
+-   Architecture decisions recorded
 
-### Not Yet Implemented
+### Not Yet Implemented At That Point
 
-- Materials database migration
-- Materials API
-- Materials UI
-- Review database migration
-- Review API
-- Review evidence transaction
-- Review UI
-- Progress UI
-- Automated business tests
-- Playwright tests
-- Final documentation
+-   Materials database migration
+-   Materials API
+-   Materials UI
+-   Review database migration
+-   Review API
+-   Review evidence transaction
+-   Review UI
+-   Progress UI
+-   Automated business tests
+-   Playwright tests
+-   Final documentation
 
 This separation is intentional.
 
-The repository is now in a state where the implementation can begin from an informed design rather than from trial and error.
+The repository is now in a state where the implementation can begin from
+an informed design rather than from trial and error.
 
----
+------------------------------------------------------------------------
 
-# 26. Timing
+# 26. Initial Timing Record
 
-I will keep two different timing records because they measure different things.
+I kept two different timing records because they measure different
+things.
 
 ### Environment / setup response time
 
 The initial environment troubleshooting took approximately:
 
-```text
+``` text
 ~30 minutes 21 seconds
 ```
 
-for the first `make dev` attempt before it timed out, followed by additional investigation and fixes for the SELinux and pnpm workspace issues.
+for the first `make dev` attempt before it timed out, followed by
+additional investigation and fixes for the SELinux and pnpm workspace
+issues.
 
 ### Actual implementation time
 
-```text
+``` text
 Pending
 ```
 
-I will record this after the required business functionality has been implemented.
+I will record this after the required business functionality has been
+implemented.
 
-The purpose of keeping these separate is to avoid presenting environment/debugging time as if it were implementation time.
+The purpose of keeping these separate is to avoid presenting
+environment/debugging time as if it were implementation time.
 
----
+------------------------------------------------------------------------
 
 # 27. Current Working Principle
 
 The main principle guiding the implementation is:
 
-> Understand the existing system first, make the smallest change that satisfies the requirement, enforce important rules on the server and database, and verify each major step before moving to the next one.
+> Understand the existing system first, make the smallest change that
+> satisfies the requirement, enforce important rules on the server and
+> database, and verify each major step before moving to the next one.
 
-I also want every significant technical decision to be explainable without saying:
+I also want every significant technical decision to be explainable
+without saying:
 
 > "The AI suggested it."
 
-AI can help me investigate, compare approaches, identify risks, and move faster.
+AI can help me investigate, compare approaches, identify risks, and move
+faster.
 
-But the final implementation should be based on my understanding of the repository, the assignment requirements, and evidence from the code and tests.
+But the final implementation should be based on my understanding of the
+repository, the assignment requirements, and evidence from the code and
+tests.
 
----
+------------------------------------------------------------------------
 
-# 28. Next Step
+# 28. Original Next Step
 
-Before writing the first migration, I will inspect the existing ID, error, timestamp, workspace, and database conventions in the relevant Rust and SQL code.
+Before writing the first migration, I planned to inspect the existing
+ID, error, timestamp, workspace, and database conventions in the
+relevant Rust and SQL code.
 
-The purpose is to make the new schema and API feel like a natural extension of the existing project rather than a separate design placed on top of it.
+The purpose is to make the new schema and API feel like a natural
+extension of the existing project rather than a separate design placed
+on top of it.
 
-After those conventions are confirmed, I can write the migration and proceed incrementally from the database layer upward.
+After those conventions are confirmed, I can write the migration and
+proceed incrementally from the database layer upward.
 
+The sections below were added during implementation as checkpoints. They
+record what was actually implemented, what changed from the original
+plan, problems discovered during development, and how those decisions
+were verified.
 
 ### Database Implementation Checkpoint
 
-The database design was implemented in migration `0003_dataroom_and_reviews.sql`.
+The database design was implemented in migration
+`0003_dataroom_and_reviews.sql`.
 
 The migration introduces three tables:
 
-- `materials` — stores DataRoom materials belonging to a workspace.
-- `reviews` — stores an investor's review for a fixed review criterion.
-- `review_evidence` — connects reviews to the materials used as evidence.
+-   `materials` --- stores DataRoom materials belonging to a workspace.
+-   `reviews` --- stores an investor's review for a fixed review
+    criterion.
+-   `review_evidence` --- connects reviews to the materials used as
+    evidence.
 
-The schema uses foreign keys, check constraints, unique constraints, and indexes to enforce important domain rules at the database level. In particular, a review is unique per workspace, investor, and criterion, while duplicate evidence materials cannot be associated with the same review.
+The schema uses foreign keys, check constraints, unique constraints, and
+indexes to enforce important domain rules at the database level. In
+particular, a review is unique per workspace, investor, and criterion,
+while duplicate evidence materials cannot be associated with the same
+review.
 
 The migration also seeds the four materials from the provided scenario:
 
-- `company-overview.md` — `ready`
-- `team.md` — `ready`
-- `revenue.txt` — `failed`
-- `customer-interviews.md` — `processing`
+-   `company-overview.md` --- `ready`
+-   `team.md` --- `ready`
+-   `revenue.txt` --- `failed`
+-   `customer-interviews.md` --- `processing`
 
-The separate `samples/revenue-update.md` file was intentionally not seeded because it represents a new material that can later be registered through the DataRoom flow.
+The separate `samples/revenue-update.md` file was intentionally not
+seeded because it represents a new material that can later be registered
+through the DataRoom flow.
 
-During development, migration `0003` was modified after it had already been applied to the development database. The migration system detected the changed migration checksum and stopped the API from starting. Since the database contained disposable development data, the development database was reset and the migration was reapplied. Going forward, applied migrations will be treated as immutable, and schema changes will be introduced through new migration files.
+During development, migration `0003` was modified after it had already
+been applied to the development database. The migration system detected
+the changed migration checksum and stopped the API from starting. Since
+the database contained disposable development data, the development
+database was reset and the migration was reapplied. Going forward,
+applied migrations will be treated as immutable, and schema changes will
+be introduced through new migration files.
 
-The database was then verified manually. The three new tables exist, the expected constraints and indexes are present, the four scenario materials are present with the expected statuses, and the review/evidence tables are initially empty as expected.
-
+The database was then verified manually. The three new tables exist, the
+expected constraints and indexes are present, the four scenario
+materials are present with the expected statuses, and the
+review/evidence tables are initially empty as expected.
 
 ### DataRoom API Contract and DTO Implementation
 
 #### API contract
 
-Before implementing the DataRoom dispatcher, I finalized the RPC contract for the material workflow.
+Before implementing the DataRoom dispatcher, I finalized the RPC
+contract for the material workflow.
 
 The DataRoom exposes three methods:
 
-- `list_materials` — lists materials in the authenticated user's workspace, optionally filtered by title.
-- `get_material` — retrieves one material, including its content.
-- `register_material` — registers a new `.txt` or `.md` material.
+-   `list_materials` --- lists materials in the authenticated user's
+    workspace, optionally filtered by title.
+-   `get_material` --- retrieves one material, including its content.
+-   `register_material` --- registers a new `.txt` or `.md` material.
 
-The server derives `workspace_id` and `uploader_id` from the authenticated session. The client does not provide these values. The material status is also server-controlled and is initially set to `ready`.
+The server derives `workspace_id` and `uploader_id` from the
+authenticated session. The client does not provide these values. The
+material status is also server-controlled and is initially set to
+`ready`.
 
-The API uses typed request and response DTOs rather than passing arbitrary JSON structures through the domain layer.
+The API uses typed request and response DTOs rather than passing
+arbitrary JSON structures through the domain layer.
 
 #### Rust DTOs and TypeScript generation
 
@@ -1083,68 +1258,91 @@ Implemented the DataRoom DTOs in:
 
 The DTOs include:
 
-- `MaterialStatus`
-- `MaterialSummary`
-- `MaterialDetail`
-- `ListMaterialsParams`
-- `ListMaterialsResponse`
-- `GetMaterialParams`
-- `GetMaterialResponse`
-- `RegisterMaterialParams`
-- `RegisterMaterialResponse`
+-   `MaterialStatus`
+-   `MaterialSummary`
+-   `MaterialDetail`
+-   `ListMaterialsParams`
+-   `ListMaterialsResponse`
+-   `GetMaterialParams`
+-   `GetMaterialResponse`
+-   `RegisterMaterialParams`
+-   `RegisterMaterialResponse`
 
-The existing `serde` and `ts-rs` conventions were preserved. Rust fields use snake_case while the generated API contract uses camelCase for TypeScript consumers.
+The existing `serde` and `ts-rs` conventions were preserved. Rust fields
+use snake_case while the generated API contract uses camelCase for
+TypeScript consumers.
 
-Generated TypeScript files are produced by the existing Gen-TS pipeline and are not edited manually.
+Generated TypeScript files are produced by the existing Gen-TS pipeline
+and are not edited manually.
 
 #### Docker TypeScript generation fix
 
-While running `make gen-ts-docker`, TypeScript generation initially failed with an `EROFS` (Read-only filesystem) error.
+While running `make gen-ts-docker`, TypeScript generation initially
+failed with an `EROFS` (Read-only filesystem) error.
 
-The problem was caused by the generation output path conflicting with an existing read-only Docker volume mount.
+The problem was caused by the generation output path conflicting with an
+existing read-only Docker volume mount.
 
-I updated `scripts/gen-ts-docker.sh` so the generation output is explicitly mounted as:
+I updated `scripts/gen-ts-docker.sh` so the generation output is
+explicitly mounted as:
 
 `/out-client:rw,z`
 
-This gives the code-generation process a writable output location while preserving the runtime container's existing read-only volume configuration.
+This gives the code-generation process a writable output location while
+preserving the runtime container's existing read-only volume
+configuration.
 
-After the change, `make gen-ts-docker` completed successfully and generated the expected TypeScript contracts.
+After the change, `make gen-ts-docker` completed successfully and
+generated the expected TypeScript contracts.
 
 #### Verification
 
 The Gen-TS generation step was executed successfully.
 
-
-
-
 ### DataRoom Backend: Dispatcher and List Materials
 
 #### DataRoom RPC architecture
 
-The DataRoom HTTP handler remains intentionally thin. `api/src/handlers/dataroom_rpc.rs` is responsible for extracting the authenticated user, database pool, and `DataroomRpcRequest`, then forwarding the request to `dataroom::dispatch`.
+The DataRoom HTTP handler remains intentionally thin.
+`api/src/handlers/dataroom_rpc.rs` is responsible for extracting the
+authenticated user, database pool, and `DataroomRpcRequest`, then
+forwarding the request to `dataroom::dispatch`.
 
-The DataRoom dispatcher in `api/src/dataroom/mod.rs` is responsible for the DataRoom-specific authorization and routing:
+The DataRoom dispatcher in `api/src/dataroom/mod.rs` is responsible for
+the DataRoom-specific authorization and routing:
 
-1. Verify that the requested `workspace_id` matches the authenticated user's workspace.
-2. Verify role requirements for operations that require specific permissions.
-3. Match the RPC method to the appropriate DataRoom operation.
-4. Deserialize operation-specific parameters.
-5. Execute the domain/database operation.
+1.  Verify that the requested `workspace_id` matches the authenticated
+    user's workspace.
+2.  Verify role requirements for operations that require specific
+    permissions.
+3.  Match the RPC method to the appropriate DataRoom operation.
+4.  Deserialize operation-specific parameters.
+5.  Execute the domain/database operation.
 
-I kept this separation instead of moving the dispatcher logic into the HTTP handler because it follows the architecture already established by the skeleton and keeps transport concerns separate from DataRoom business logic.
+I kept this separation instead of moving the dispatcher logic into the
+HTTP handler because it follows the architecture already established by
+the skeleton and keeps transport concerns separate from DataRoom
+business logic.
 
 #### Workspace authorization
 
-Workspace isolation is enforced before DataRoom operations are dispatched.
+Workspace isolation is enforced before DataRoom operations are
+dispatched.
 
-The authenticated user's workspace is treated as the authoritative workspace boundary. The client-provided `workspace_id` is not trusted as proof of access.
+The authenticated user's workspace is treated as the authoritative
+workspace boundary. The client-provided `workspace_id` is not trusted as
+proof of access.
 
-If the requested workspace does not match the authenticated user's workspace, the dispatcher returns `403 Forbidden` before executing the requested operation.
+If the requested workspace does not match the authenticated user's
+workspace, the dispatcher returns `403 Forbidden` before executing the
+requested operation.
 
-For `register_material`, the user's role is also checked before processing the request. Only users with the `Company` role can register materials.
+For `register_material`, the user's role is also checked before
+processing the request. Only users with the `Company` role can register
+materials.
 
-This establishes the authorization boundary before domain-specific processing.
+This establishes the authorization boundary before domain-specific
+processing.
 
 #### List materials
 
@@ -1152,64 +1350,77 @@ Implemented the `list_materials` DataRoom RPC operation.
 
 The operation:
 
-- Lists materials belonging only to the authenticated user's workspace.
-- Supports an optional title search.
-- Uses parameterized SQL for search values.
-- Sorts results by `created_at DESC, id ASC`.
-- Returns summary information rather than material content.
-- Returns material status as the typed `MaterialStatus` enum.
-- Ignores an empty or whitespace-only search value and treats it as no search filter.
+-   Lists materials belonging only to the authenticated user's
+    workspace.
+-   Supports an optional title search.
+-   Uses parameterized SQL for search values.
+-   Sorts results by `created_at DESC, id ASC`.
+-   Returns summary information rather than material content.
+-   Returns material status as the typed `MaterialStatus` enum.
+-   Ignores an empty or whitespace-only search value and treats it as no
+    search filter.
 
-The database query explicitly scopes results using the authenticated user's workspace rather than trusting a workspace identifier from the request.
+The database query explicitly scopes results using the authenticated
+user's workspace rather than trusting a workspace identifier from the
+request.
 
 The API response uses the existing DataRoom DTO boundary:
 
-- `MaterialSummary`
-- `ListMaterialsParams`
-- `ListMaterialsResponse`
+-   `MaterialSummary`
+-   `ListMaterialsParams`
+-   `ListMaterialsResponse`
 
-These DTOs remain in `api/src/dataroom/types.rs` because they represent the API contract between Rust and TypeScript. `models.rs` is reserved for database/domain models if they become necessary; no additional model abstraction was introduced for this operation because the current query is small and does not benefit from it.
+These DTOs remain in `api/src/dataroom/types.rs` because they represent
+the API contract between Rust and TypeScript. `models.rs` is reserved
+for database/domain models if they become necessary; no additional model
+abstraction was introduced for this operation because the current query
+is small and does not benefit from it.
 
 #### Timestamp representation
 
-The DataRoom DTOs currently represent timestamps as `String`. The existing API dependency configuration does not enable SQLx's `time` feature, so the list query converts `TIMESTAMPTZ` to text using PostgreSQL rather than introducing another dependency solely for this operation.
+The DataRoom DTOs currently represent timestamps as `String`. The
+existing API dependency configuration does not enable SQLx's `time`
+feature, so the list query converts `TIMESTAMPTZ` to text using
+PostgreSQL rather than introducing another dependency solely for this
+operation.
 
 #### Verification
 
-After implementing `list_materials`, the following checks were run successfully:
+After implementing `list_materials`, the following checks were run
+successfully:
 
-```bash
+``` bash
 docker compose exec -w /app/api api cargo check --locked
 ```
 
 and:
 
-```bash
+``` bash
 docker compose exec -w /app/api api cargo test dataroom::tests
 ```
 
 The existing DataRoom authorization tests continued to pass, including:
 
-- rejection of cross-workspace requests;
-- rejection of investor attempts to register materials before input validation.
+-   rejection of cross-workspace requests;
+-   rejection of investor attempts to register materials before input
+    validation.
 
 #### Current implementation status
 
 Completed:
 
-- DataRoom RPC dispatcher
-- Workspace authorization
-- Company-only authorization for material registration
-- `list_materials` RPC
-- Material summary response
-- Focused DataRoom backend tests
+-   DataRoom RPC dispatcher
+-   Workspace authorization
+-   Company-only authorization for material registration
+-   `list_materials` RPC
+-   Material summary response
+-   Focused DataRoom backend tests
 
 Next:
 
-- Implement `get_material`
-- Add material lookup and not-found behavior
-- Verify cross-workspace material access is not exposed
-
+-   Implement `get_material`
+-   Add material lookup and not-found behavior
+-   Verify cross-workspace material access is not exposed
 
 ### DataRoom Backend: Material Operations Complete
 
@@ -1219,20 +1430,26 @@ Implemented the `get_material` DataRoom RPC operation.
 
 The operation:
 
-- Deserializes the requested material ID using the typed `GetMaterialParams` DTO.
-- Retrieves the material using both the material ID and the authenticated user's workspace ID.
-- Returns the full `MaterialDetail`, including content and timestamps.
-- Returns `404 Not Found` when the material does not exist or does not belong to the authenticated user's workspace.
-- Maps the database material status to the typed `MaterialStatus` enum.
+-   Deserializes the requested material ID using the typed
+    `GetMaterialParams` DTO.
+-   Retrieves the material using both the material ID and the
+    authenticated user's workspace ID.
+-   Returns the full `MaterialDetail`, including content and timestamps.
+-   Returns `404 Not Found` when the material does not exist or does not
+    belong to the authenticated user's workspace.
+-   Maps the database material status to the typed `MaterialStatus`
+    enum.
 
 Workspace scoping is enforced directly in the database query:
 
-```sql
+``` sql
 WHERE id = $1
   AND workspace_id = $2
 ```
 
-This prevents a user from retrieving material content from another workspace and avoids exposing whether a material ID exists outside their accessible workspace.
+This prevents a user from retrieving material content from another
+workspace and avoids exposing whether a material ID exists outside their
+accessible workspace.
 
 #### Register material
 
@@ -1240,73 +1457,92 @@ Implemented the `register_material` DataRoom RPC operation.
 
 The client supplies only:
 
-- title
-- file name
-- content
+-   title
+-   file name
+-   content
 
 The server derives the security-sensitive fields:
 
-- `workspace_id` from the authenticated user's workspace;
-- `uploader_id` from the authenticated user's ID;
-- `status` as `ready`;
-- - material ID using the same secure random ID-generation mechanism already used by the authentication system, with a `mat_` prefix.
+-   `workspace_id` from the authenticated user's workspace;
+-   `uploader_id` from the authenticated user's ID;
+-   `status` as `ready`;
+-   -   material ID using the same secure random ID-generation mechanism
+        already used by the authentication system, with a `mat_` prefix.
 
 Validation is performed before database insertion:
 
-- title must not be empty or whitespace-only;
-- file name must end in `.txt` or `.md`, case-insensitively.
+-   title must not be empty or whitespace-only;
+-   file name must end in `.txt` or `.md`, case-insensitively.
 
-I did not add a separate content-size check inside the domain operation because the requirement concerns the entire HTTP request size rather than only the content string. The existing application request-size handling remains responsible for that boundary.
+I did not add a separate content-size check inside the domain operation
+because the requirement concerns the entire HTTP request size rather
+than only the content string. The existing application request-size
+handling remains responsible for that boundary.
 
 #### Authorization boundary
 
-The DataRoom dispatcher remains responsible for authorization before invoking DataRoom operations.
+The DataRoom dispatcher remains responsible for authorization before
+invoking DataRoom operations.
 
-For `register_material`, the dispatcher verifies that the authenticated user has the `Company` role before calling the material registration operation.
+For `register_material`, the dispatcher verifies that the authenticated
+user has the `Company` role before calling the material registration
+operation.
 
-This means an unauthorized investor request is rejected before material validation or database access.
+This means an unauthorized investor request is rejected before material
+validation or database access.
 
 The distinction is intentional:
 
-- `dataroom::dispatch` owns RPC routing and authorization.
-- `register_material` owns material-specific validation and persistence.
+-   `dataroom::dispatch` owns RPC routing and authorization.
+-   `register_material` owns material-specific validation and
+    persistence.
 
 #### Testing and debugging
 
 The DataRoom test suite now contains eight focused tests covering:
 
-- cross-workspace RPC rejection;
-- investor registration rejection;
-- successful material retrieval;
-- missing material handling;
-- cross-workspace material retrieval;
-- successful material registration;
-- empty title validation;
-- unsupported file type validation.
+-   cross-workspace RPC rejection;
+-   investor registration rejection;
+-   successful material retrieval;
+-   missing material handling;
+-   cross-workspace material retrieval;
+-   successful material registration;
+-   empty title validation;
+-   unsupported file type validation.
 
 All eight tests pass.
 
-During the registration test implementation, the initial test assumptions exposed several issues:
+During the registration test implementation, the initial test
+assumptions exposed several issues:
 
-1. The repository's validation error code is `invalid_input`, not `invalid`.
-2. The investor authorization test needed to exercise the dispatcher rather than calling `register_material` directly because authorization belongs to the dispatcher layer.
-3. The `materials.uploader_id` foreign key requires the test user to exist in the `users` table, so the database-backed registration test uses the existing seeded `company-user`.
-4. The successful registration test verifies that the server stores the authenticated user's workspace and user ID rather than accepting those values from the client.
+1.  The repository's validation error code is `invalid_input`, not
+    `invalid`.
+2.  The investor authorization test needed to exercise the dispatcher
+    rather than calling `register_material` directly because
+    authorization belongs to the dispatcher layer.
+3.  The `materials.uploader_id` foreign key requires the test user to
+    exist in the `users` table, so the database-backed registration test
+    uses the existing seeded `company-user`.
+4.  The successful registration test verifies that the server stores the
+    authenticated user's workspace and user ID rather than accepting
+    those values from the client.
 
-These failures were used to align the tests with the existing architecture and database constraints rather than changing the implementation to satisfy incorrect test assumptions.
+These failures were used to align the tests with the existing
+architecture and database constraints rather than changing the
+implementation to satisfy incorrect test assumptions.
 
 #### Verification
 
 The following checks are passing:
 
-```text
+``` text
 docker compose exec -w /app/api api cargo check --locked
 docker compose exec -w /app/api api cargo test dataroom::tests
 ```
 
 The focused DataRoom test suite currently passes:
 
-```text
+``` text
 8 passed; 0 failed
 ```
 
@@ -1314,265 +1550,341 @@ The focused DataRoom test suite currently passes:
 
 Completed:
 
-- DataRoom RPC dispatcher
-- Workspace authorization
-- Company-only material registration authorization
-- `list_materials`
-- `get_material`
-- `register_material`
-- Material validation
-- Material persistence
-- Workspace isolation
-- Focused DataRoom backend tests
+-   DataRoom RPC dispatcher
+-   Workspace authorization
+-   Company-only material registration authorization
+-   `list_materials`
+-   `get_material`
+-   `register_material`
+-   Material validation
+-   Material persistence
+-   Workspace isolation
+-   Focused DataRoom backend tests
 
 Next:
 
-- Review Plugin backend/API implementation
-- Define and implement review RPC operations
-- Preserve the existing Plugin/Gen-TS architecture
-
-
+-   Review Plugin backend/API implementation
+-   Define and implement review RPC operations
+-   Preserve the existing Plugin/Gen-TS architecture
 
 ### AI-Assisted Review Plugin Contract Review
 
-Before implementing the Review Plugin backend, I used an AI coding assistant to critically review the proposed RPC/API contract against the assignment requirements.
+Before implementing the Review Plugin backend, I used an AI coding
+assistant to critically review the proposed RPC/API contract against the
+assignment requirements.
 
-The AI was given the Review Plugin requirements, the proposed RPC methods (`list_criteria`, `get_summary`, `list_reviews`, `get_review`, and `save_review`), the proposed save payload, and the database uniqueness constraint.
+The AI was given the Review Plugin requirements, the proposed RPC
+methods (`list_criteria`, `get_summary`, `list_reviews`, `get_review`,
+and `save_review`), the proposed save payload, and the database
+uniqueness constraint.
 
-The AI identified several important concerns, including deterministic criterion ordering, preserving review IDs during edits, workspace-scoped evidence validation, authorization before input validation, transactional review/evidence updates, strong review status typing, and the need for database-level uniqueness.
+The AI identified several important concerns, including deterministic
+criterion ordering, preserving review IDs during edits, workspace-scoped
+evidence validation, authorization before input validation,
+transactional review/evidence updates, strong review status typing, and
+the need for database-level uniqueness.
 
-I adopted these recommendations where they matched the repository requirements. In particular:
-- criteria will be ordered by `display_order`;
-- review edits will preserve the existing review ID;
-- evidence will be validated against the authenticated workspace and `ready` status;
-- duplicate evidence IDs will be rejected rather than silently deduplicated;
-- unauthorized write requests will be rejected before domain/input validation;
-- review status will use a typed Rust enum and generated TypeScript union;
-- review and evidence changes will be performed in one database transaction;
-- the existing `(workspace_id, criterion_id, user_id)` uniqueness constraint will protect the one-review-per-investor-per-criterion invariant.
+I adopted these recommendations where they matched the repository
+requirements. In particular: - criteria will be ordered by
+`display_order`; - review edits will preserve the existing review ID; -
+evidence will be validated against the authenticated workspace and
+`ready` status; - duplicate evidence IDs will be rejected rather than
+silently deduplicated; - unauthorized write requests will be rejected
+before domain/input validation; - review status will use a typed Rust
+enum and generated TypeScript union; - review and evidence changes will
+be performed in one database transaction; - the existing
+`(workspace_id, criterion_id, user_id)` uniqueness constraint will
+protect the one-review-per-investor-per-criterion invariant.
 
-I did not adopt every AI recommendation. For example, the assignment does not explicitly require `get_summary` for company users to return zero progress, so I will not invent that behavior. I also treated PostgreSQL `ON CONFLICT DO UPDATE` as an implementation alternative rather than a requirement.
+I did not adopt every AI recommendation. For example, the assignment
+does not explicitly require `get_summary` for company users to return
+zero progress, so I will not invent that behavior. I also treated
+PostgreSQL `ON CONFLICT DO UPDATE` as an implementation alternative
+rather than a requirement.
 
-The recommendations were validated against the actual README, migration schema, existing Review Plugin skeleton, and the previously implemented DataRoom architecture.
-
+The recommendations were validated against the actual README, migration
+schema, existing Review Plugin skeleton, and the previously implemented
+DataRoom architecture.
 
 ### Review Plugin DTOs and Gen-TS Contract
 
-After reviewing the Review Plugin requirements and existing skeleton, I defined the initial API DTOs for the required review operations.
+After reviewing the Review Plugin requirements and existing skeleton, I
+defined the initial API DTOs for the required review operations.
 
-The Review Plugin uses a typed `ReviewStatus` enum with the two allowed values:
-- `satisfied`
-- `needs_information`
+The Review Plugin uses a typed `ReviewStatus` enum with the two allowed
+values: - `satisfied` - `needs_information`
 
-The main DTOs cover:
-- fixed review criteria;
-- investor review progress;
-- review list items;
-- review detail and evidence;
-- review save input;
-- review save response.
+The main DTOs cover: - fixed review criteria; - investor review
+progress; - review list items; - review detail and evidence; - review
+save input; - review save response.
 
-The save request intentionally contains only client-controlled review data:
-- criterion ID;
-- review status;
-- opinion;
-- evidence material IDs.
+The save request intentionally contains only client-controlled review
+data: - criterion ID; - review status; - opinion; - evidence material
+IDs.
 
-The authenticated user and workspace are not accepted from the client and will be derived from the authenticated session on the server.
+The authenticated user and workspace are not accepted from the client
+and will be derived from the authenticated session on the server.
 
-The DTOs use `serde(rename_all = "camelCase")` so the generated TypeScript matches the existing frontend conventions.
+The DTOs use `serde(rename_all = "camelCase")` so the generated
+TypeScript matches the existing frontend conventions.
 
-After implementation, `make gen-ts-docker` successfully generated the corresponding TypeScript types under `api-client/src/types/`.
+After implementation, `make gen-ts-docker` successfully generated the
+corresponding TypeScript types under `api-client/src/types/`.
 
-I verified generated types including:
-- `ReviewStatus` → `"satisfied" | "needs_information"`
-- `SaveReviewParams` → `criterionId`, `status`, `opinion`, `evidenceMaterialIds`
-- `ReviewCriterion` → `reviewQuestion`, `displayOrder`
-- `ReviewDetail` → `criterionId`, `criterionTitle`, `reviewQuestion`, `createdAt`, `updatedAt`, and nested evidence.
+I verified generated types including: - `ReviewStatus` →
+`"satisfied" | "needs_information"` - `SaveReviewParams` →
+`criterionId`, `status`, `opinion`, `evidenceMaterialIds` -
+`ReviewCriterion` → `reviewQuestion`, `displayOrder` - `ReviewDetail` →
+`criterionId`, `criterionTitle`, `reviewQuestion`, `createdAt`,
+`updatedAt`, and nested evidence.
 
 No generated TypeScript files were edited manually.
 
-
 ### Review Plugin Dispatcher and Criteria
 
-The Review Plugin server follows the same thin-handler/domain-dispatch boundary used by the DataRoom implementation.
+The Review Plugin server follows the same thin-handler/domain-dispatch
+boundary used by the DataRoom implementation.
 
-The Review Plugin RPC dispatcher:
-- verifies that the requested workspace matches the authenticated user's workspace;
-- routes requests by the Plugin RPC method;
-- keeps authorization decisions at the dispatcher boundary;
-- delegates the actual operation to the corresponding Review Plugin server function.
+The Review Plugin RPC dispatcher: - verifies that the requested
+workspace matches the authenticated user's workspace; - routes requests
+by the Plugin RPC method; - keeps authorization decisions at the
+dispatcher boundary; - delegates the actual operation to the
+corresponding Review Plugin server function.
 
 The first implemented business operation is `list_criteria`.
 
-The criteria are fixed in the `review_criteria` table by the initial migration. The API does not provide criterion creation or modification.
+The criteria are fixed in the `review_criteria` table by the initial
+migration. The API does not provide criterion creation or modification.
 
-`list_criteria` reads the fixed criteria and explicitly orders them by `display_order ASC`. The resulting order is:
-1. `business`
-2. `team`
-3. `revenue`
+`list_criteria` reads the fixed criteria and explicitly orders them by
+`display_order ASC`. The resulting order is: 1. `business` 2. `team` 3.
+`revenue`
 
-A real PostgreSQL-backed test was added using the repository's existing `DATABASE_URL` test convention. The test verifies both the returned criterion IDs and their display order.
+A real PostgreSQL-backed test was added using the repository's existing
+`DATABASE_URL` test convention. The test verifies both the returned
+criterion IDs and their display order.
 
-Verification:
-- `cargo test list_criteria`
-- Result: 1 passed, 0 failed.
-
+Verification: - `cargo test list_criteria` - Result: 1 passed, 0 failed.
 
 ### Review Plugin Progress Summary
 
-The Review Plugin `get_summary` operation is restricted to authenticated investors and calculates progress for the current user within the authenticated workspace.
+The Review Plugin `get_summary` operation is restricted to authenticated
+investors and calculates progress for the current user within the
+authenticated workspace.
 
-The summary is based on the fixed review criteria rather than the number of existing reviews. This means a new investor starts with all three criteria remaining.
+The summary is based on the fixed review criteria rather than the number
+of existing reviews. This means a new investor starts with all three
+criteria remaining.
 
-The summary reports:
-- `completed` — criteria with an existing review;
-- `remaining` — criteria without a review;
-- `satisfied` — completed reviews marked as satisfied;
-- `needs_information` — completed reviews marked as needing more information.
+The summary reports: - `completed` --- criteria with an existing
+review; - `remaining` --- criteria without a review; - `satisfied` ---
+completed reviews marked as satisfied; - `needs_information` ---
+completed reviews marked as needing more information.
 
-A `needs_information` review still counts as completed because the assignment defines progress based on whether the criterion has been reviewed, not whether the investor is satisfied with the available information.
+A `needs_information` review still counts as completed because the
+assignment defines progress based on whether the criterion has been
+reviewed, not whether the investor is satisfied with the available
+information.
 
-The query is scoped by both `workspace_id` and the authenticated `user_id`, so one investor cannot affect another investor's progress.
+The query is scoped by both `workspace_id` and the authenticated
+`user_id`, so one investor cannot affect another investor's progress.
 
-Tests were added for:
-- a new investor with no reviews;
-- `needs_information` counting as completed;
-- isolation from another investor's reviews.
+Tests were added for: - a new investor with no reviews; -
+`needs_information` counting as completed; - isolation from another
+investor's reviews.
 
-Verification:
-- `cargo test get_summary`
-- Result: 3 passed, 0 failed.
-- `cargo check --locked`
-- Result: passed.
-
+Verification: - `cargo test get_summary` - Result: 3 passed, 0 failed. -
+`cargo check --locked` - Result: passed.
 
 #### Review Plugin Review List
 
-The Review Plugin `list_reviews` operation is restricted to authenticated investors. Company users receive an empty review list because investor reviews are private and are not available to the company through this Plugin.
+The Review Plugin `list_reviews` operation is restricted to
+authenticated investors. Company users receive an empty review list
+because investor reviews are private and are not available to the
+company through this Plugin.
 
-For investors, reviews are scoped by both the authenticated workspace and authenticated user. The API does not accept a user ID from the client to determine whose reviews are returned.
+For investors, reviews are scoped by both the authenticated workspace
+and authenticated user. The API does not accept a user ID from the
+client to determine whose reviews are returned.
 
-The review list joins `reviews` with `review_criteria` so each review includes its criterion title. Evidence is not returned in the list response; the detailed review operation is responsible for returning the linked evidence.
+The review list joins `reviews` with `review_criteria` so each review
+includes its criterion title. Evidence is not returned in the list
+response; the detailed review operation is responsible for returning the
+linked evidence.
 
-Results are ordered deterministically by the fixed criterion display order, followed by most recently updated reviews and the review ID as a tie-breaker.
+Results are ordered deterministically by the fixed criterion display
+order, followed by most recently updated reviews and the review ID as a
+tie-breaker.
 
-During testing, the initial database-backed tests exposed interference caused by Rust running tests in parallel against the same PostgreSQL database. Instead of serializing the tests, the database-backed tests were isolated using temporary users with unique IDs. Temporary reviews are removed before their temporary users are deleted.
+During testing, the initial database-backed tests exposed interference
+caused by Rust running tests in parallel against the same PostgreSQL
+database. Instead of serializing the tests, the database-backed tests
+were isolated using temporary users with unique IDs. Temporary reviews
+are removed before their temporary users are deleted.
 
-Tests cover:
-- an investor with no reviews;
-- returning the authenticated investor's reviews;
-- preventing another investor's reviews from being returned;
-- returning an empty list for company users.
+Tests cover: - an investor with no reviews; - returning the
+authenticated investor's reviews; - preventing another investor's
+reviews from being returned; - returning an empty list for company
+users.
 
-Verification:
-- `cargo test review`
-- Result: 9 passed, 0 failed.
-
+Verification: - `cargo test review` - Result: 9 passed, 0 failed.
 
 ### Review Plugin Review Detail and Privacy
 
-The Review Plugin `get_review` operation retrieves the authenticated investor's own review and the evidence linked to that review.
+The Review Plugin `get_review` operation retrieves the authenticated
+investor's own review and the evidence linked to that review.
 
-The operation is restricted to investors. Company users are rejected before request parameter validation because investor reviews are private.
+The operation is restricted to investors. Company users are rejected
+before request parameter validation because investor reviews are
+private.
 
-Review lookup is scoped by:
-- review ID;
-- authenticated workspace ID;
-- authenticated user ID.
+Review lookup is scoped by: - review ID; - authenticated workspace ID; -
+authenticated user ID.
 
-This means an investor cannot retrieve another investor's review, even when the review ID is known. Missing reviews and reviews belonging to another investor return `404` rather than revealing whether the review exists.
+This means an investor cannot retrieve another investor's review, even
+when the review ID is known. Missing reviews and reviews belonging to
+another investor return `404` rather than revealing whether the review
+exists.
 
-The review detail joins the fixed review criterion so the response includes the criterion title and review question. Linked evidence is also hydrated from the `materials` table and returned with its ID, title, file name, and status.
+The review detail joins the fixed review criterion so the response
+includes the criterion title and review question. Linked evidence is
+also hydrated from the `materials` table and returned with its ID,
+title, file name, and status.
 
-The evidence join is additionally constrained to the review's workspace so a cross-workspace material cannot be exposed even if inconsistent database state exists.
+The evidence join is additionally constrained to the review's workspace
+so a cross-workspace material cannot be exposed even if inconsistent
+database state exists.
 
-The existing review ID and timestamps are returned unchanged. This will also allow the later save operation to preserve the review identity when an investor edits an existing review.
+The existing review ID and timestamps are returned unchanged. This will
+also allow the later save operation to preserve the review identity when
+an investor edits an existing review.
 
-Tests were added for:
-- retrieving the authenticated investor's own review with evidence;
-- returning `404` for a missing review;
-- returning `404` when another investor attempts to access a review;
-- returning `403` when a company user attempts to access an investor review.
+Tests were added for: - retrieving the authenticated investor's own
+review with evidence; - returning `404` for a missing review; -
+returning `404` when another investor attempts to access a review; -
+returning `403` when a company user attempts to access an investor
+review.
 
-Verification:
-- `cargo test get_review`
-- Result: 4 passed, 0 failed.
-- `cargo check --locked`
-- Result: passed.
-
+Verification: - `cargo test get_review` - Result: 4 passed, 0 failed. -
+`cargo check --locked` - Result: passed.
 
 ### AI-Assisted Save Review Concurrency and Transaction Review
 
-Before implementing `save_review`, I used an AI coding assistant to critically review the proposed design against the assignment requirements. The AI was instructed not to write implementation code and instead focus on authorization ordering, evidence validation, transactions, create/update races, evidence replacement, rollback behavior, and database constraints.
+Before implementing `save_review`, I used an AI coding assistant to
+critically review the proposed design against the assignment
+requirements. The AI was instructed not to write implementation code and
+instead focus on authorization ordering, evidence validation,
+transactions, create/update races, evidence replacement, rollback
+behavior, and database constraints.
 
-The AI recommended using PostgreSQL `INSERT ... ON CONFLICT DO UPDATE` inside a transaction rather than a separate `SELECT` followed by `INSERT` or `UPDATE`.
+The AI recommended using PostgreSQL `INSERT ... ON CONFLICT DO UPDATE`
+inside a transaction rather than a separate `SELECT` followed by
+`INSERT` or `UPDATE`.
 
-I adopted this recommendation because the existing database has a unique constraint on `(workspace_id, criterion_id, user_id)`, and the PostgreSQL upsert provides an atomic create/update path that is safe when two saves for the same investor and criterion happen concurrently.
+I adopted this recommendation because the existing database has a unique
+constraint on `(workspace_id, criterion_id, user_id)`, and the
+PostgreSQL upsert provides an atomic create/update path that is safe
+when two saves for the same investor and criterion happen concurrently.
 
-I also adopted the recommendations to:
-- reject duplicate evidence IDs instead of silently deduplicating them;
-- validate all evidence IDs in one parameterized SQL query;
-- require every evidence material to belong to the authenticated workspace and have `ready` status;
-- replace review evidence inside the same transaction as the review mutation;
-- preserve the existing review ID and `created_at` when editing;
-- rely on the database uniqueness constraint as the final protection against duplicate reviews.
+I also adopted the recommendations to: - reject duplicate evidence IDs
+instead of silently deduplicating them; - validate all evidence IDs in
+one parameterized SQL query; - require every evidence material to belong
+to the authenticated workspace and have `ready` status; - replace review
+evidence inside the same transaction as the review mutation; - preserve
+the existing review ID and `created_at` when editing; - rely on the
+database uniqueness constraint as the final protection against duplicate
+reviews.
 
-I modified one recommendation: instead of hard-coding the fixed criterion IDs in Rust, criterion existence will be checked against the existing `review_criteria` table. The migration already defines the fixed criteria and the foreign-key relationship, so duplicating those IDs in application logic would create an unnecessary second source of truth.
+I modified one recommendation: instead of hard-coding the fixed
+criterion IDs in Rust, criterion existence will be checked against the
+existing `review_criteria` table. The migration already defines the
+fixed criteria and the foreign-key relationship, so duplicating those
+IDs in application logic would create an unnecessary second source of
+truth.
 
-I rejected unnecessary complexity such as advisory locks, a preliminary `SELECT ... FOR UPDATE`, separate create/update RPC methods, and generic repository abstractions.
+I rejected unnecessary complexity such as advisory locks, a preliminary
+`SELECT ... FOR UPDATE`, separate create/update RPC methods, and generic
+repository abstractions.
 
-The recommendations were validated through focused tests covering authorization, input validation, evidence validation, create/update behavior, rollback, and concurrent saves
-
-
+The recommendations were validated through focused tests covering
+authorization, input validation, evidence validation, create/update
+behavior, rollback, and concurrent saves
 
 ### Review Plugin Save Review and Transactional Persistence
 
-The Review Plugin `save_review` operation is restricted to authenticated investors. The authenticated workspace and user are derived from the server-side session rather than accepted from the client.
+The Review Plugin `save_review` operation is restricted to authenticated
+investors. The authenticated workspace and user are derived from the
+server-side session rather than accepted from the client.
 
-The save operation validates:
-- the review criterion exists in the fixed `review_criteria` table;
-- the opinion is not empty or whitespace-only;
-- the opinion is no longer than 2000 characters;
-- at least one evidence material is provided;
-- evidence material IDs are unique;
-- every evidence material belongs to the authenticated workspace;
-- every evidence material has `ready` status.
+The save operation validates: - the review criterion exists in the fixed
+`review_criteria` table; - the opinion is not empty or
+whitespace-only; - the opinion is no longer than 2000 characters; - at
+least one evidence material is provided; - evidence material IDs are
+unique; - every evidence material belongs to the authenticated
+workspace; - every evidence material has `ready` status.
 
-Evidence validation is performed with a parameterized query and the number of valid materials is compared with the number requested. This prevents missing, cross-workspace, processing, or failed materials from being silently accepted.
+Evidence validation is performed with a parameterized query and the
+number of valid materials is compared with the number requested. This
+prevents missing, cross-workspace, processing, or failed materials from
+being silently accepted.
 
-Review creation and editing use PostgreSQL `INSERT ... ON CONFLICT DO UPDATE` with the existing uniqueness constraint on `(workspace_id, criterion_id, user_id)`. This provides an atomic create/update path for concurrent saves.
+Review creation and editing use PostgreSQL
+`INSERT ... ON CONFLICT DO UPDATE` with the existing uniqueness
+constraint on `(workspace_id, criterion_id, user_id)`. This provides an
+atomic create/update path for concurrent saves.
 
-When editing an existing review, the existing review ID and `created_at` are preserved. Only the review status, opinion, and `updated_at` are changed.
+When editing an existing review, the existing review ID and `created_at`
+are preserved. Only the review status, opinion, and `updated_at` are
+changed.
 
-Evidence is replaced inside the same database transaction as the review mutation. The existing evidence links are deleted and the new evidence links are inserted before the transaction is committed.
+Evidence is replaced inside the same database transaction as the review
+mutation. The existing evidence links are deleted and the new evidence
+links are inserted before the transaction is committed.
 
-If any database operation fails, the transaction is rolled back so that the review and its previous evidence remain unchanged. A rollback test was added to verify this behavior.
+If any database operation fails, the transaction is rolled back so that
+the review and its previous evidence remain unchanged. A rollback test
+was added to verify this behavior.
 
-Concurrency was also tested by executing two saves for the same investor and criterion concurrently. The test verifies that the database uniqueness constraint prevents duplicate reviews and that the final review contains one consistent set of evidence from one of the successful saves.
+Concurrency was also tested by executing two saves for the same investor
+and criterion concurrently. The test verifies that the database
+uniqueness constraint prevents duplicate reviews and that the final
+review contains one consistent set of evidence from one of the
+successful saves.
 
-The implementation intentionally does not introduce a queue or background worker. `save_review` is a short transactional database operation that needs to return its result synchronously. Database constraints and transactions are sufficient for the concurrency and atomicity requirements of this assignment.
+The implementation intentionally does not introduce a queue or
+background worker. `save_review` is a short transactional database
+operation that needs to return its result synchronously. Database
+constraints and transactions are sufficient for the concurrency and
+atomicity requirements of this assignment.
 
-Tests added for `save_review` cover authorization, input validation, evidence validation, review creation, review editing, evidence replacement, transaction rollback, and concurrent saves.
+Tests added for `save_review` cover authorization, input validation,
+evidence validation, review creation, review editing, evidence
+replacement, transaction rollback, and concurrent saves.
 
-Verification:
-- focused `save_review` tests passed;
-- create and update persistence tests passed;
-- rollback test passed;
-- concurrent save test passed.
-
+Verification: - focused `save_review` tests passed; - create and update
+persistence tests passed; - rollback test passed; - concurrent save test
+passed.
 
 ### AI-Assisted Backend Architecture Review and Refactor
 
-Before moving to the frontend, I used an AI coding assistant to review the completed DataRoom and Review Plugin backend structure. The goal was to identify whether the implementation had unnecessary complexity or whether the current files were becoming too large to maintain.
+Before moving to the frontend, I used an AI coding assistant to review
+the completed DataRoom and Review Plugin backend structure. The goal was
+to identify whether the implementation had unnecessary complexity or
+whether the current files were becoming too large to maintain.
 
-The review identified that the backend was functionally complete and that the main maintainability issue was file density rather than a broken architecture. In particular, the Review Plugin `server/mod.rs` contained both the implementation and a large test suite, while the DataRoom module also mixed implementation and tests.
+The review identified that the backend was functionally complete and
+that the main maintainability issue was file density rather than a
+broken architecture. In particular, the Review Plugin `server/mod.rs`
+contained both the implementation and a large test suite, while the
+DataRoom module also mixed implementation and tests.
 
-The AI recommended a targeted refactor instead of introducing a large layered architecture such as controllers, services, repositories, and DAOs.
+The AI recommended a targeted refactor instead of introducing a large
+layered architecture such as controllers, services, repositories, and
+DAOs.
 
 I adopted the following structure:
 
-```text
+``` text
 api/src/dataroom/
 ├── mod.rs
 ├── models.rs
@@ -1588,354 +1900,534 @@ plugins/review/server/
 
 The responsibilities are:
 
-- `mod.rs` — RPC dispatch, authorization guards, validation, transaction orchestration, and business operations.
-- `models.rs` — internal SQLx row structures used to map meaningful database query results.
-- `types.rs` — public API/Plugin DTOs and `ts-rs` generated TypeScript contracts.
-- `tests.rs` — backend tests and test helpers.
+-   `mod.rs` --- RPC dispatch, authorization guards, validation,
+    transaction orchestration, and business operations.
+-   `models.rs` --- internal SQLx row structures used to map meaningful
+    database query results.
+-   `types.rs` --- public API/Plugin DTOs and `ts-rs` generated
+    TypeScript contracts.
+-   `tests.rs` --- backend tests and test helpers.
 
-The tests were moved out of the main implementation modules without changing their behavior. This reduced the Review Plugin server module from roughly 2205 lines to 433 lines and the DataRoom module from roughly 503 lines to 207 lines.
+The tests were moved out of the main implementation modules without
+changing their behavior. This reduced the Review Plugin server module
+from roughly 2205 lines to 433 lines and the DataRoom module from
+roughly 503 lines to 207 lines.
 
-I also replaced meaningful anonymous SQLx tuples with named internal row models, including material summary/detail rows, review criteria rows, review summary rows, review list rows, and review detail rows.
+I also replaced meaningful anonymous SQLx tuples with named internal row
+models, including material summary/detail rows, review criteria rows,
+review summary rows, review list rows, and review detail rows.
 
-I intentionally did not create trivial structs for scalar queries such as counts, booleans, or single IDs. The purpose of `models.rs` is to make multi-column database results easier to understand and maintain, not to create unnecessary abstractions.
+I intentionally did not create trivial structs for scalar queries such
+as counts, booleans, or single IDs. The purpose of `models.rs` is to
+make multi-column database results easier to understand and maintain,
+not to create unnecessary abstractions.
 
-I did not introduce service/repository layers or other enterprise-style abstractions because they were not needed for the size and requirements of this assignment.
+I did not introduce service/repository layers or other enterprise-style
+abstractions because they were not needed for the size and requirements
+of this assignment.
 
-The refactor did not change:
-- API/Plugin DTO contracts;
-- generated TypeScript contracts;
-- authentication or authorization behavior;
-- workspace isolation;
-- database migrations;
-- transaction boundaries;
-- Review Plugin concurrency behavior;
-- frontend behavior.
+The refactor did not change: - API/Plugin DTO contracts; - generated
+TypeScript contracts; - authentication or authorization behavior; -
+workspace isolation; - database migrations; - transaction boundaries; -
+Review Plugin concurrency behavior; - frontend behavior.
 
-The existing `types.rs` files remain the source of the API contract, while `models.rs` contains internal database representations.
+The existing `types.rs` files remain the source of the API contract,
+while `models.rs` contains internal database representations.
 
 Verification after the refactor:
 
-- `cargo test review` — 29 passed, 0 failed.
-- `cargo test dataroom` — 8 passed, 0 failed.
-- `cargo test` — 37 passed, 0 failed.
-- `cargo check --locked` — passed with 0 errors and 0 warnings.
-- `make gen-ts-docker` — passed.
-- Generated TypeScript was regenerated successfully and had no changes.
-- Frontend files and migrations remained unchanged.
+-   `cargo test review` --- 29 passed, 0 failed.
+-   `cargo test dataroom` --- 8 passed, 0 failed.
+-   `cargo test` --- 37 passed, 0 failed.
+-   `cargo check --locked` --- passed with 0 errors and 0 warnings.
+-   `make gen-ts-docker` --- passed.
+-   Generated TypeScript was regenerated successfully and had no
+    changes.
+-   Frontend files and migrations remained unchanged.
 
-Two possible future improvements were identified during the review: sharing the duplicated Review Detail response hydration logic between `get_review` and `save_review`, and batching evidence inserts. These were intentionally left out because they are optimizations rather than requirements, and introducing them at this stage would increase refactor scope without improving the assignment outcome.
+Two possible future improvements were identified during the review:
+sharing the duplicated Review Detail response hydration logic between
+`get_review` and `save_review`, and batching evidence inserts. These
+were intentionally left out because they are optimizations rather than
+requirements, and introducing them at this stage would increase refactor
+scope without improving the assignment outcome.
 
-The result is a cleaner backend structure while preserving the existing security, API contracts, persistence behavior, and tests.
-
-
+The result is a cleaner backend structure while preserving the existing
+security, API contracts, persistence behavior, and tests.
 
 ### Frontend Architecture Review and UI Plan
 
-Before implementing the frontend business screens, I reviewed the existing frontend architecture and Plugin runtime to understand the intended extension points and communication boundaries.
+Before implementing the frontend business screens, I reviewed the
+existing frontend architecture and Plugin runtime to understand the
+intended extension points and communication boundaries.
 
 The existing application uses a host-and-plugin architecture:
 
-- the DataRoom is rendered by the host application;
-- the Review functionality is loaded as a Plugin;
-- Plugins receive a `PluginContext` containing the authenticated user, workspace, locale, and location;
-- Plugins communicate with the backend through the provided `PluginHost.call()` interface;
-- DataRoom operations are exposed through the DataRoom RPC target;
-- Review operations are exposed through the Review Plugin RPC target.
+-   the DataRoom is rendered by the host application;
+-   the Review functionality is loaded as a Plugin;
+-   Plugins receive a `PluginContext` containing the authenticated user,
+    workspace, locale, and location;
+-   Plugins communicate with the backend through the provided
+    `PluginHost.call()` interface;
+-   DataRoom operations are exposed through the DataRoom RPC target;
+-   Review operations are exposed through the Review Plugin RPC target.
 
 I will keep these responsibilities separate.
 
-The DataRoom UI will call the existing `dataroomRpcHandler` directly because it is part of the host application.
+The DataRoom UI will call the existing `dataroomRpcHandler` directly
+because it is part of the host application.
 
-The Review Plugin will use `host.call()` for its own Review RPC operations. When the Review Plugin needs materials for evidence selection, it will use:
+The Review Plugin will use `host.call()` for its own Review RPC
+operations. When the Review Plugin needs materials for evidence
+selection, it will use:
 
-```ts
-host.call("list_materials", null, { target: "dataroom" })
+``` ts
+host.call("list_materials", { search: null }, { target: "dataroom" })
 ```
 
-This keeps material ownership inside the DataRoom while allowing the Review Plugin to consume the data through the existing Plugin Host boundary.
+This keeps material ownership inside the DataRoom while allowing the
+Review Plugin to consume the data through the existing Plugin Host
+boundary.
 
-The frontend will reuse the existing React Query setup, `scopedKey` cache-key convention, UI kit components, design tokens, and localization system. No new state-management library, HTTP client, backend endpoint, or database migration is required.
+The frontend will reuse the existing React Query setup, `scopedKey`
+cache-key convention, UI kit components, design tokens, and localization
+system. No new state-management library, HTTP client, backend endpoint,
+or database migration is required.
 
 The UI implementation will be developed incrementally:
 
-1. DataRoom materials list, search, detail, and company-only material registration.
-2. Review Plugin progress and criteria views.
-3. Review creation/editing with evidence selection.
-4. Role-based restrictions and complete loading, error, empty, and success states.
-5. Playwright end-to-end tests covering the complete business flow.
+1.  DataRoom materials list, search, detail, and company-only material
+    registration.
+2.  Review Plugin progress and criteria views.
+3.  Review creation/editing with evidence selection.
+4.  Role-based restrictions and complete loading, error, empty, and
+    success states.
+5.  Playwright end-to-end tests covering the complete business flow.
 
-The UI will reflect the backend authorization rules rather than relying only on backend rejection. Company users will not be shown investor review functionality, and investors will not be shown the material registration action.
+The UI will reflect the backend authorization rules rather than relying
+only on backend rejection. Company users will not be shown investor
+review functionality, and investors will not be shown the material
+registration action.
 
-The implementation will prioritize the required business flow and existing architecture rather than introducing additional abstractions.
-
+The implementation will prioritize the required business flow and
+existing architecture rather than introducing additional abstractions.
 
 ### DataRoom Materials UI Implementation
 
-The first frontend milestone implemented the DataRoom materials workflow using the existing host application architecture.
+The first frontend milestone implemented the DataRoom materials workflow
+using the existing host application architecture.
 
 The DataRoom UI now supports:
 
-- listing materials within the authenticated workspace;
-- searching materials through the existing `list_materials` RPC operation;
-- displaying material status (`ready`, `processing`, and `failed`);
-- opening a material detail view through the existing `get_material` operation;
-- company-only material registration through `register_material`;
-- appropriate loading, error, empty, and search-empty states.
+-   listing materials within the authenticated workspace;
+-   searching materials through the existing `list_materials` RPC
+    operation;
+-   displaying material status (`ready`, `processing`, and `failed`);
+-   opening a material detail view through the existing `get_material`
+    operation;
+-   company-only material registration through `register_material`;
+-   appropriate loading, error, empty, and search-empty states.
 
-The material list uses React Query with the search value included in the query key:
+The material list uses React Query with the search value included in the
+query key:
 
 `["dataroom", workspaceId, "materials", search]`
 
-This prevents different searches from incorrectly sharing the same cached result. After a successful material registration, the relevant DataRoom material queries are invalidated so the new material appears without a page reload.
+This prevents different searches from incorrectly sharing the same
+cached result. After a successful material registration, the relevant
+DataRoom material queries are invalidated so the new material appears
+without a page reload.
 
-Material content is loaded only when a user opens a specific material. The list uses the summary projection and does not fetch full material content for every item.
+Material content is loaded only when a user opens a specific material.
+The list uses the summary projection and does not fetch full material
+content for every item.
 
-The registration form is available only to authenticated company users. The frontend uses the authenticated session to control the user experience, but does not send user identity or role as client-controlled authorization data. Backend authorization remains the final security boundary.
+The registration form is available only to authenticated company users.
+The frontend uses the authenticated session to control the user
+experience, but does not send user identity or role as client-controlled
+authorization data. Backend authorization remains the final security
+boundary.
 
-The registration form validates the supported `.txt` and `.md` file types and performs an early client-side size check. The backend remains responsible for enforcing the actual request-size and authorization constraints.
+The registration form validates the supported `.txt` and `.md` file
+types and performs an early client-side size check. The backend remains
+responsible for enforcing the actual request-size and authorization
+constraints.
 
-Registration failures preserve the user's entered title and selected file so the user can correct the problem and retry without losing their input. Successful registration clears the form, closes the registration interface, and invalidates the material list.
+Registration failures preserve the user's entered title and selected
+file so the user can correct the problem and retry without losing their
+input. Successful registration clears the form, closes the registration
+interface, and invalidates the material list.
 
-The UI reuses the existing UI kit, React Query setup, localization system, and design tokens. No new state-management library, HTTP client, API endpoint, database migration, or frontend dependency was introduced.
+The UI reuses the existing UI kit, React Query setup, localization
+system, and design tokens. No new state-management library, HTTP client,
+API endpoint, database migration, or frontend dependency was introduced.
 
-Verification:
-- `pnpm typecheck` passed;
-- `pnpm lint` passed;
-- `pnpm build` passed;
-- `cargo test` passed: 37 tests;
-- `cargo check --locked` passed.
+Verification: - `pnpm typecheck` passed; - `pnpm lint` passed; -
+`pnpm build` passed; - `cargo test` passed: 37 tests; -
+`cargo check --locked` passed.
 
-The implementation was intentionally kept within the DataRoom milestone. Review Plugin UI and Playwright end-to-end tests remain separate future milestones.
-
+The implementation was intentionally kept within the DataRoom milestone.
+Review Plugin UI and Playwright end-to-end tests remain separate future
+milestones.
 
 ### Review Plugin Dashboard and Read-Only UI
 
-The second frontend milestone implemented the Review Plugin dashboard and read-only review experience using the existing Plugin architecture.
+The second frontend milestone implemented the Review Plugin dashboard
+and read-only review experience using the existing Plugin architecture.
 
 The Review Plugin now provides authenticated investors with:
 
-- personal review progress;
-- the fixed review criteria;
-- their own submitted reviews;
-- review status and opinion summaries;
-- on-demand review details;
-- linked evidence information.
+-   personal review progress;
+-   the fixed review criteria;
+-   their own submitted reviews;
+-   review status and opinion summaries;
+-   on-demand review details;
+-   linked evidence information.
 
-The Plugin communicates with the backend exclusively through the existing `PluginHost.call()` boundary. The implemented operations are:
+The Plugin communicates with the backend exclusively through the
+existing `PluginHost.call()` boundary. The implemented operations are:
 
-- `get_summary`;
-- `list_criteria`;
-- `list_reviews`;
-- `get_review`.
+-   `get_summary`;
+-   `list_criteria`;
+-   `list_reviews`;
+-   `get_review`.
 
-The Review Plugin uses the existing `scopedKey` convention for React Query. Query keys include the authenticated user ID and workspace ID so review progress and review data cannot be incorrectly reused between different investors or workspaces.
+The Review Plugin uses the existing `scopedKey` convention for React
+Query. Query keys include the authenticated user ID and workspace ID so
+review progress and review data cannot be incorrectly reused between
+different investors or workspaces.
 
-Company users receive a restricted Review UI and do not trigger investor-only RPC queries. The frontend role check is used for user experience and query prevention, while backend authorization remains the final security boundary.
+Company users receive a restricted Review UI and do not trigger
+investor-only RPC queries. The frontend role check is used for user
+experience and query prevention, while backend authorization remains the
+final security boundary.
 
-The progress summary follows the backend business rules. In particular, a `needs_information` review counts as completed progress.
+The progress summary follows the backend business rules. In particular,
+a `needs_information` review counts as completed progress.
 
-Review criteria are rendered in the deterministic order supplied by the backend. Review list responses contain lightweight review information, while full review details are fetched only when the investor selects a specific review.
+Review criteria are rendered in the deterministic order supplied by the
+backend. Review list responses contain lightweight review information,
+while full review details are fetched only when the investor selects a
+specific review.
 
-The read-only detail view displays the criterion, review question, status, opinion, timestamps, and linked evidence. Evidence selection and modification are intentionally deferred to the next milestone.
+The read-only detail view displays the criterion, review question,
+status, opinion, timestamps, and linked evidence. Evidence selection and
+modification are intentionally deferred to the next milestone.
 
-The UI includes loading, error, empty, and detail states, with retry actions and accessible status/error semantics. The Review Plugin also follows the existing Korean/English localization mechanism and shared UI kit.
+The UI includes loading, error, empty, and detail states, with retry
+actions and accessible status/error semantics. The Review Plugin also
+follows the existing Korean/English localization mechanism and shared UI
+kit.
 
-No new frontend testing framework was introduced. The repository does not currently contain a unit/component testing framework or frontend component tests; its existing browser-level test infrastructure is Playwright. Adding a new testing framework at this stage would unnecessarily expand the project scope. Verification therefore used the existing type checking, linting, production build, and backend test suite. Dedicated Playwright end-to-end tests remain a later milestone covering the complete business flow.
+No new frontend testing framework was introduced. The repository does
+not currently contain a unit/component testing framework or frontend
+component tests; its existing browser-level test infrastructure is
+Playwright. Adding a new testing framework at this stage would
+unnecessarily expand the project scope. Verification therefore used the
+existing type checking, linting, production build, and backend test
+suite. Dedicated Playwright end-to-end tests remain a later milestone
+covering the complete business flow.
 
-Verification:
-- `pnpm typecheck` passed;
-- `pnpm lint` passed;
-- `pnpm build` passed;
-- `cargo test` passed: 37 tests;
-- `cargo check --locked` passed.
+Verification: - `pnpm typecheck` passed; - `pnpm lint` passed; -
+`pnpm build` passed; - `cargo test` passed: 37 tests; -
+`cargo check --locked` passed.
 
-The implementation intentionally stops at the read-only Review experience. Review creation/editing, DataRoom material selection for evidence, `save_review`, and end-to-end browser tests remain future milestones.
-
+The implementation intentionally stops at the read-only Review
+experience. Review creation/editing, DataRoom material selection for
+evidence, `save_review`, and end-to-end browser tests remain future
+milestones.
 
 ### Review Plugin Review Creation, Editing, Evidence Selection, and Save
 
-The third frontend milestone completed the investor review workflow on top of the existing Review Plugin backend.
+The third frontend milestone completed the investor review workflow on
+top of the existing Review Plugin backend.
 
 The Review Plugin now supports:
 
-- creating a review for an unreviewed criterion;
-- editing an existing review;
-- selecting DataRoom materials as evidence;
-- submitting review status and opinion;
-- replacing evidence when a review is edited;
-- preserving form state when saving fails;
-- refreshing review progress and review lists after a successful save.
+-   creating a review for an unreviewed criterion;
+-   editing an existing review;
+-   selecting DataRoom materials as evidence;
+-   submitting review status and opinion;
+-   replacing evidence when a review is edited;
+-   preserving form state when saving fails;
+-   refreshing review progress and review lists after a successful save.
 
-The create and edit flows use the same `save_review` RPC operation. When creating a review, the investor selects an unreviewed criterion and starts with an empty opinion and evidence selection. When editing, the existing criterion is kept read-only and the previous status, opinion, and evidence are loaded into the form.
+The create and edit flows use the same `save_review` RPC operation. When
+creating a review, the investor selects an unreviewed criterion and
+starts with an empty opinion and evidence selection. When editing, the
+existing criterion is kept read-only and the previous status, opinion,
+and evidence are loaded into the form.
 
-Evidence materials are retrieved through the existing Plugin Host boundary rather than through a new frontend API:
+Evidence materials are retrieved through the existing Plugin Host
+boundary rather than through a new frontend API:
 
 `host.call("list_materials", { search: null }, { target: "dataroom" })`
 
-Only materials with `ready` status can be selected as evidence. Processing and failed materials remain unavailable for selection. The backend remains responsible for the authoritative workspace and readiness validation.
+Only materials with `ready` status can be selected as evidence.
+Processing and failed materials remain unavailable for selection. The
+backend remains responsible for the authoritative workspace and
+readiness validation.
 
-Client-side validation checks that:
-- a criterion is selected;
-- the review status is valid;
-- the opinion is not empty or whitespace-only;
-- the opinion does not exceed 2000 characters;
-- at least one evidence material is selected.
+Client-side validation checks that: - a criterion is selected; - the
+review status is valid; - the opinion is not empty or whitespace-only; -
+the opinion does not exceed 2000 characters; - at least one evidence
+material is selected.
 
-The frontend validation is used for immediate user feedback. The backend continues to enforce the same rules as the final security and integrity boundary.
+The frontend validation is used for immediate user feedback. The backend
+continues to enforce the same rules as the final security and integrity
+boundary.
 
-When `save_review` fails, the editor remains open and preserves the criterion, status, opinion, and selected evidence so the investor can correct the problem or retry. On success, the Review Plugin invalidates the scoped review queries, closes the editor, resets the form, and displays success feedback.
+When `save_review` fails, the editor remains open and preserves the
+criterion, status, opinion, and selected evidence so the investor can
+correct the problem or retry. On success, the Review Plugin invalidates
+the scoped review queries, closes the editor, resets the form, and
+displays success feedback.
 
-During browser verification, the initial evidence-material request returned HTTP 400 with `invalid_input` and the message `Invalid list parameters.` The Review Plugin had initially passed `null` as the RPC parameters. Inspection of the generated `ListMaterialsParams` contract and the existing DataRoom UI showed that the RPC expects an object containing the optional search field:
+During browser verification, the initial evidence-material request
+returned HTTP 400 with `invalid_input` and the message
+`Invalid list parameters.` The Review Plugin had initially passed `null`
+as the RPC parameters. Inspection of the generated `ListMaterialsParams`
+contract and the existing DataRoom UI showed that the RPC expects an
+object containing the optional search field:
 
 `{ search: null }`
 
-The Review Plugin was corrected to use this generated contract shape. No backend or API contract changes were necessary.
+The Review Plugin was corrected to use this generated contract shape. No
+backend or API contract changes were necessary.
 
-The implementation continues to use the existing Plugin Host, React Query, generated TypeScript contracts, UI kit, localization system, and role-based frontend gating. No new endpoint, state-management library, dependency, database migration, or testing framework was introduced.
+The implementation continues to use the existing Plugin Host, React
+Query, generated TypeScript contracts, UI kit, localization system, and
+role-based frontend gating. No new endpoint, state-management library,
+dependency, database migration, or testing framework was introduced.
 
-Verification:
-- `pnpm typecheck` passed;
-- `pnpm lint` passed;
-- `pnpm build` passed;
-- `cargo test` passed: 37 tests;
-- `cargo check --locked` passed;
-- browser verification confirmed DataRoom evidence materials load successfully through the Plugin Host;
-- only `plugins/review/ui/app.tsx` was changed for the runtime integration fix.
+Verification: - `pnpm typecheck` passed; - `pnpm lint` passed; -
+`pnpm build` passed; - `cargo test` passed: 37 tests; -
+`cargo check --locked` passed; - browser verification confirmed DataRoom
+evidence materials load successfully through the Plugin Host; - only
+`plugins/review/ui/app.tsx` was changed for the runtime integration fix.
 
 Playwright end-to-end testing remains the next frontend milestone.
 
-
 ### UI Checkpoint 4: Role-Based Experience and UI Consistency Inspection
 
-The fourth frontend milestone was an inspection-only review of the completed DataRoom and Review Plugin UI. No code changes were required.
+The fourth frontend milestone was an inspection-only review of the
+completed DataRoom and Review Plugin UI. No code changes were required.
 
 The inspection verified the role boundaries required by the assignment.
 
 For company users:
 
-- DataRoom material listing, search, detail viewing, and material registration are available.
-- Material registration is only rendered for company users.
-- The Review Plugin displays a clear restriction message because investor reviews are private.
-- Investor-only Review Plugin queries are disabled for company users, so unnecessary authorization failures are avoided.
-- Company users cannot see investor progress, reviews, review creation/editing controls, or evidence selection.
+-   DataRoom material listing, search, detail viewing, and material
+    registration are available.
+-   Material registration is only rendered for company users.
+-   The Review Plugin displays a clear restriction message because
+    investor reviews are private.
+-   Investor-only Review Plugin queries are disabled for company users,
+    so unnecessary authorization failures are avoided.
+-   Company users cannot see investor progress, reviews, review
+    creation/editing controls, or evidence selection.
 
 For investor users:
 
-- DataRoom materials can be viewed and searched, but material registration is not available.
-- Personal review progress is available.
-- Investors can create and edit their own reviews.
-- Evidence is loaded through the existing Plugin Host boundary from the DataRoom.
-- Only materials with `ready` status can be selected as evidence.
-- `processing` and `failed` materials cannot be selected.
-- Review details include the criterion, question, status, opinion, timestamps, and linked evidence.
+-   DataRoom materials can be viewed and searched, but material
+    registration is not available.
+-   Personal review progress is available.
+-   Investors can create and edit their own reviews.
+-   Evidence is loaded through the existing Plugin Host boundary from
+    the DataRoom.
+-   Only materials with `ready` status can be selected as evidence.
+-   `processing` and `failed` materials cannot be selected.
+-   Review details include the criterion, question, status, opinion,
+    timestamps, and linked evidence.
 
 The inspection also verified frontend data isolation.
 
-Review Plugin React Query keys include both the authenticated user ID and workspace ID. The Plugin is also mounted with a user/workspace-specific React key, and each Plugin instance receives its own React Query client. This prevents review state from being incorrectly reused between investors or workspaces.
+Review Plugin React Query keys include both the authenticated user ID
+and workspace ID. The Plugin is also mounted with a
+user/workspace-specific React key, and each Plugin instance receives its
+own React Query client. This prevents review state from being
+incorrectly reused between investors or workspaces.
 
-The UI was also checked for consistency with the existing application architecture. The implementation uses the existing UI kit, design tokens, localization system, accessibility patterns, and responsive layout conventions.
+The UI was also checked for consistency with the existing application
+architecture. The implementation uses the existing UI kit, design
+tokens, localization system, accessibility patterns, and responsive
+layout conventions.
 
-Loading, error, empty, and success states were reviewed. Form state is preserved when mutations fail, allowing users to correct the input and retry.
+Loading, error, empty, and success states were reviewed. Form state is
+preserved when mutations fail, allowing users to correct the input and
+retry.
 
-No bugs, requirement violations, unnecessary dependencies, or architectural changes were identified during this checkpoint.
+No bugs, requirement violations, unnecessary dependencies, or
+architectural changes were identified during this checkpoint.
 
 No files were changed during this checkpoint.
 
-The UI is therefore considered ready for browser-level end-to-end testing.
+The UI is therefore considered ready for browser-level end-to-end
+testing.
 
-Verification:
-- inspection completed without code changes;
-- role-based rendering and query gating verified;
-- investor/workspace query isolation verified;
-- responsive and accessibility behavior reviewed;
-- Playwright test scenarios defined for the next milestone.
+Verification: - inspection completed without code changes; - role-based
+rendering and query gating verified; - investor/workspace query
+isolation verified; - responsive and accessibility behavior reviewed; -
+Playwright test scenarios defined for the next milestone.
 
-The next milestone is the Playwright end-to-end test suite covering the complete DataRoom → evidence → review → progress workflow.
-
+The next milestone is the Playwright end-to-end test suite covering the
+complete DataRoom → evidence → review → progress workflow.
 
 ### UI Checkpoint 5: Playwright End-to-End Test Suite
 
-The fifth frontend milestone added browser-level end-to-end coverage for the completed DataRoom and Review Plugin workflows.
+The fifth frontend milestone added browser-level end-to-end coverage for
+the completed DataRoom and Review Plugin workflows.
 
-The E2E suite was split by domain ownership instead of placing all scenarios in one large test file:
+The E2E suite was split by domain ownership instead of placing all
+scenarios in one large test file:
 
-- `tests/dataroom.spec.ts` covers DataRoom behavior;
-- `tests/review.spec.ts` covers Review Plugin behavior;
-- `tests/support/auth.ts` contains the small shared login/logout implementation.
+-   `tests/dataroom.spec.ts` covers DataRoom behavior;
+-   `tests/review.spec.ts` covers Review Plugin behavior;
+-   `tests/support/auth.ts` contains the small shared login/logout
+    implementation.
 
-This keeps the tests aligned with the application's domain boundaries while avoiding unnecessary test abstractions.
+This keeps the tests aligned with the application's domain boundaries
+while avoiding unnecessary test abstractions.
 
 The DataRoom tests cover:
 
-- company material listing;
-- material search;
-- material registration;
-- material detail viewing;
-- investor read-only access;
-- company-only registration behavior.
+-   company material listing;
+-   material search;
+-   material registration;
+-   material detail viewing;
+-   investor read-only access;
+-   company-only registration behavior.
 
 The Review Plugin tests cover:
 
-- company restriction;
-- investor review progress;
-- review creation;
-- DataRoom evidence selection through the existing UI;
-- rejection of `processing` and `failed` materials as evidence;
-- review editing;
-- evidence replacement;
-- `needs_information` progress behavior;
-- isolation between different investors;
-- review form validation.
+-   company restriction;
+-   investor review progress;
+-   review creation;
+-   DataRoom evidence selection through the existing UI;
+-   rejection of `processing` and `failed` materials as evidence;
+-   review editing;
+-   evidence replacement;
+-   `needs_information` progress behavior;
+-   isolation between different investors;
+-   review form validation.
 
-The Review tests intentionally use the seeded DataRoom materials rather than depending on the DataRoom test suite running first. This keeps the two test domains independent.
+The Review tests intentionally use the seeded DataRoom materials rather
+than depending on the DataRoom test suite running first. This keeps the
+two test domains independent.
 
-Authentication is performed through the real application login UI. A shared `loginAs` and `logout` implementation is used by both test files.
+Authentication is performed through the real application login UI. A
+shared `loginAs` and `logout` implementation is used by both test files.
 
-The tests use accessible Playwright selectors such as `getByRole`, `getByLabel`, `getByText`, and `getByPlaceholder` where possible. Existing stable element IDs are used only where appropriate. No synthetic `data-testid` attributes were added.
+The tests use accessible Playwright selectors such as `getByRole`,
+`getByLabel`, `getByText`, and `getByPlaceholder` where possible.
+Existing stable element IDs are used only where appropriate. No
+synthetic `data-testid` attributes were added.
 
-The tests avoid arbitrary waiting with `page.waitForTimeout()`. Playwright's retrying assertions are used to synchronize with asynchronous UI updates.
+The tests avoid arbitrary waiting with `page.waitForTimeout()`.
+Playwright's retrying assertions are used to synchronize with
+asynchronous UI updates.
 
-The existing Playwright configuration already provides both Desktop Chrome and Pixel 7 projects. The same E2E suite runs against both viewports without separate mobile-specific test implementations.
+The existing Playwright configuration already provides both Desktop
+Chrome and Pixel 7 projects. The same E2E suite runs against both
+viewports without separate mobile-specific test implementations.
 
-Database state was considered during the test design. Material registration uses unique titles to avoid collisions across repeated runs, while Review tests use the seeded materials and the existing review persistence behavior. The suite was executed repeatedly to verify that the tests remain deterministic.
+Database state was considered during the test design. Material
+registration uses unique titles to avoid collisions across repeated
+runs, while Review tests use the seeded materials and the existing
+review persistence behavior. The suite was executed repeatedly to verify
+that the tests remain deterministic.
 
 Verification:
 
-- Desktop Playwright suite: 6 passed, 0 failed;
-- Mobile Playwright suite: 6 passed, 0 failed;
-- Total: 12 passed, 0 failed;
-- `pnpm typecheck` passed;
-- `pnpm lint` passed;
-- no production files were modified;
-- no database migrations were added or changed.
+-   Desktop Playwright suite: 6 passed, 0 failed;
+-   Mobile Playwright suite: 6 passed, 0 failed;
+-   Total: 12 passed, 0 failed;
+-   `pnpm typecheck` passed;
+-   `pnpm lint` passed;
+-   no production files were modified;
+-   no database migrations were added or changed.
 
-The completed E2E suite now covers the main browser-level business flow across both roles and both supported viewport configurations.
-
-
+The completed E2E suite now covers the main browser-level business flow
+across both roles and both supported viewport configurations.
 
 ### AI-Assisted E2E Test Development and Debugging
 
-For the Playwright milestone, I used an AI coding assistant as an implementation and debugging aid rather than allowing it to make unrestricted changes to the application.
+For the Playwright milestone, I used an AI coding assistant as an
+implementation and debugging aid rather than allowing it to make
+unrestricted changes to the application.
 
-The AI was first given an inspection-only task to understand the existing Playwright configuration, authentication flow, available viewports, application selectors, seeded database state, and existing test infrastructure.
+The AI was first given an inspection-only task to understand the
+existing Playwright configuration, authentication flow, available
+viewports, application selectors, seeded database state, and existing
+test infrastructure.
 
-Based on that inspection, the E2E architecture was deliberately split into two domain test files:
+Based on that inspection, the E2E architecture was deliberately split
+into two domain test files:
 
-- `tests/dataroom.spec.ts`
-- `tests/review.spec.ts`
+-   `tests/dataroom.spec.ts`
+-   `tests/review.spec.ts`
 
 A small shared authentication module was also introduced at:
 
-- `tests/support/auth.ts`
+-   `tests/support/auth.ts`
 
-The AI was then instructed to implement the tests without modifying production code, migrations, generated contracts, or application dependencies.
+The AI was then instructed to implement the tests without modifying
+production code, migrations, generated contracts, or application
+dependencies.
 
-The implementation covered DataRoom registration and permissions, Review Plugin creation and editing, evidence readiness, investor isolation, progress behavior, and form validation.
+The implementation covered DataRoom registration and permissions, Review
+Plugin creation and editing, evidence readiness, investor isolation,
+progress behavior, and form validation.
 
-During implementation, Playwright strict-mode failures were encountered around some UI locators. The AI investigated the failing selectors and refined them to target the intended modal close buttons and evidence rows more precisely.
+During implementation, Playwright strict-mode failures were encountered
+around some UI locators. The AI investigated the failing selectors and
+refined them to target the intended modal close buttons and evidence
+rows more precisely.
 
-I adopted these changes because they addressed actual Playwright locator ambiguity rather than changing application behavior to satisfy the tests.
+I adopted these changes because they addressed actual Playwright locator
+ambiguity rather than changing application behavior to satisfy the
+tests.
 
-The test suite was then validated using the repository's real Playwright test environment. The final suite passed on both Desktop Chrome and Pixel 7, with 12 out of 12 tests passing.
+The test suite was then validated using the repository's real Playwright
+test environment. The final suite passed on both Desktop Chrome and
+Pixel 7, with 12 out of 12 tests passing.
 
-The AI output was therefore treated as a development aid that required inspection, modification where appropriate, and independent verification through the actual test suite. No AI-generated production behavior was accepted without validation.
+The AI output was therefore treated as a development aid that required
+inspection, modification where appropriate, and independent verification
+through the actual test suite. No AI-generated production behavior was
+accepted without validation.
+
+------------------------------------------------------------------------
+
+# 29. Final Documentation Status
+
+The implementation described in the checkpoints above is now complete.
+
+The final repository includes:
+
+-   DataRoom material registration, listing, search, and detail viewing;
+-   Review Plugin criteria, progress, review listing, review detail,
+    creation, editing, and evidence handling;
+-   workspace and role-based authorization;
+-   transactional review/evidence persistence and concurrency
+    protection;
+-   generated TypeScript contracts;
+-   responsive role-based frontend flows;
+-   Playwright end-to-end coverage for the main business workflows.
+
+Final verification recorded during the implementation:
+
+-   `cargo test` --- 37 passed;
+-   `make test-e2e` --- 12 passed across Desktop Chrome and Pixel 7;
+-   `pnpm typecheck` --- passed;
+-   `pnpm lint` --- passed;
+-   `pnpm build` --- passed;
+-   `cargo check --locked` --- passed.
+
+The implementation time is intentionally not filled in here yet because
+it should be based on the actual development record rather than an
+estimate.
+
+The separate final documentation files explain the finished
+implementation, testing/reproduction steps, and concrete AI usage
+examples.

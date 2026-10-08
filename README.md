@@ -143,14 +143,40 @@ Playwright 설정과 빈 `tests/` 폴더가 포함되어 있습니다. 테스트
 | UI 작성과 사용자 흐름     |  30% | 직접 구현한 업무 화면, 등록→검토→현황 흐름, 상태·오류 처리·사용성                             |
 
 
-## Candidate(My) Implementation Notes
+# Implementation Notes and Submission Documentation
 
-See `approach.md` for:
+The original assignment requirements and setup instructions above are kept intact. The sections below point to the documentation added during the implementation.
 
-- implementation approach
-- architecture decisions
-- environment setup and troubleshooting
-- AI-assisted development
-- testing strategy
-- implementation progress
-- known limitations
+## Implementation Documentation
+
+- [`approach.md`](./approach.md) — development approach, engineering decisions, debugging notes, and changes in understanding during implementation.
+- [`docs/implementation.md`](./docs/implementation.md) — overview of the final architecture and how the DataRoom, Review Plugin, API, database, Gen-TS, and UI work together.
+- [`docs/testing.md`](./docs/testing.md) — setup, test strategy, commands, test data, database reset/isolation, results, and known testing limitations.
+- [`docs/ai-usage.md`](./docs/ai-usage.md) — concrete examples of how AI was used during the implementation, including what was accepted, changed, and verified.
+
+## Initial Approach
+
+Before implementation, I documented my understanding of the assignment, assumptions, and planned implementation order.
+
+That initial plan was committed before development started and is preserved in Git history:
+
+`ce3f5d1` — `docs: document initial implementation approach`
+
+The later development decisions, implementation changes, debugging notes, and changes in understanding are documented in [`approach.md`](./approach.md).
+
+## Development Time
+
+- **Implementation and development:** approximately 12 hours
+- **Environment setup and troubleshooting:** approximately 30 minutes to 1 hour
+
+The development time covers implementation, debugging, testing, and integration of the Dataroom workflow. The environment/setup time covers getting the provided Docker-based development environment running and resolving setup-related issues before development could proceed.
+
+## Final Scope
+
+The required Dataroom workflow has been implemented:
+
+**Company registers materials → Investor views available materials → Investor selects evidence → Investor creates a review for a criterion → Investor can edit the review/evidence → Investor checks review progress**
+
+The optional AI Review Draft feature was not implemented because it was not required and has no additional bonus points.
+
+For the final implementation details, testing instructions, and AI usage examples, see the documentation links above.
