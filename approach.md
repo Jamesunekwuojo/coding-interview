@@ -1851,3 +1851,91 @@ Verification:
 - Playwright test scenarios defined for the next milestone.
 
 The next milestone is the Playwright end-to-end test suite covering the complete DataRoom → evidence → review → progress workflow.
+
+
+### UI Checkpoint 5: Playwright End-to-End Test Suite
+
+The fifth frontend milestone added browser-level end-to-end coverage for the completed DataRoom and Review Plugin workflows.
+
+The E2E suite was split by domain ownership instead of placing all scenarios in one large test file:
+
+- `tests/dataroom.spec.ts` covers DataRoom behavior;
+- `tests/review.spec.ts` covers Review Plugin behavior;
+- `tests/support/auth.ts` contains the small shared login/logout implementation.
+
+This keeps the tests aligned with the application's domain boundaries while avoiding unnecessary test abstractions.
+
+The DataRoom tests cover:
+
+- company material listing;
+- material search;
+- material registration;
+- material detail viewing;
+- investor read-only access;
+- company-only registration behavior.
+
+The Review Plugin tests cover:
+
+- company restriction;
+- investor review progress;
+- review creation;
+- DataRoom evidence selection through the existing UI;
+- rejection of `processing` and `failed` materials as evidence;
+- review editing;
+- evidence replacement;
+- `needs_information` progress behavior;
+- isolation between different investors;
+- review form validation.
+
+The Review tests intentionally use the seeded DataRoom materials rather than depending on the DataRoom test suite running first. This keeps the two test domains independent.
+
+Authentication is performed through the real application login UI. A shared `loginAs` and `logout` implementation is used by both test files.
+
+The tests use accessible Playwright selectors such as `getByRole`, `getByLabel`, `getByText`, and `getByPlaceholder` where possible. Existing stable element IDs are used only where appropriate. No synthetic `data-testid` attributes were added.
+
+The tests avoid arbitrary waiting with `page.waitForTimeout()`. Playwright's retrying assertions are used to synchronize with asynchronous UI updates.
+
+The existing Playwright configuration already provides both Desktop Chrome and Pixel 7 projects. The same E2E suite runs against both viewports without separate mobile-specific test implementations.
+
+Database state was considered during the test design. Material registration uses unique titles to avoid collisions across repeated runs, while Review tests use the seeded materials and the existing review persistence behavior. The suite was executed repeatedly to verify that the tests remain deterministic.
+
+Verification:
+
+- Desktop Playwright suite: 6 passed, 0 failed;
+- Mobile Playwright suite: 6 passed, 0 failed;
+- Total: 12 passed, 0 failed;
+- `pnpm typecheck` passed;
+- `pnpm lint` passed;
+- no production files were modified;
+- no database migrations were added or changed.
+
+The completed E2E suite now covers the main browser-level business flow across both roles and both supported viewport configurations.
+
+
+
+### AI-Assisted E2E Test Development and Debugging
+
+For the Playwright milestone, I used an AI coding assistant as an implementation and debugging aid rather than allowing it to make unrestricted changes to the application.
+
+The AI was first given an inspection-only task to understand the existing Playwright configuration, authentication flow, available viewports, application selectors, seeded database state, and existing test infrastructure.
+
+Based on that inspection, the E2E architecture was deliberately split into two domain test files:
+
+- `tests/dataroom.spec.ts`
+- `tests/review.spec.ts`
+
+A small shared authentication module was also introduced at:
+
+- `tests/support/auth.ts`
+
+The AI was then instructed to implement the tests without modifying production code, migrations, generated contracts, or application dependencies.
+
+The implementation covered DataRoom registration and permissions, Review Plugin creation and editing, evidence readiness, investor isolation, progress behavior, and form validation.
+
+During implementation, Playwright strict-mode failures were encountered around some UI locators. The AI investigated the failing selectors and refined them to target the intended modal close buttons and evidence rows more precisely.
+
+I adopted these changes because they addressed actual Playwright locator ambiguity rather than changing application behavior to satisfy the tests.
+
+The test suite was then validated using the repository's real Playwright test environment. The final suite passed on both Desktop Chrome and Pixel 7, with 12 out of 12 tests passing.
+
+The AI output was therefore treated as a development aid that required inspection, modification where appropriate, and independent verification through the actual test suite. No AI-generated production behavior was accepted without validation.
