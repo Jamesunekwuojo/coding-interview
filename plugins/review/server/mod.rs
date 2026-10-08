@@ -6,10 +6,10 @@ use crate::{
     error::ApiError,
     types::{PluginRpcRequest, RpcResponse, UserRole},
 };
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use rand::RngCore;
 use sqlx::PgPool;
 use types::ReviewHealthResponse;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use rand::RngCore;
 
 pub const ID: &str = "review";
 

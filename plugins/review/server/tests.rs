@@ -1115,8 +1115,7 @@ async fn save_review_creates_new_review_with_evidence() {
     let response = result.expect("save_review should succeed");
 
     let result: types::SaveReviewResponse =
-        serde_json::from_value(response.result)
-            .expect("response should deserialize");
+        serde_json::from_value(response.result).expect("response should deserialize");
 
     let review = result.review;
 
@@ -1128,10 +1127,7 @@ async fn save_review_creates_new_review_with_evidence() {
         "사업 모델과 고객·시장에 관한 핵심 내용이 자료로 확인되는가?"
     );
     assert_eq!(review.status, types::ReviewStatus::Satisfied);
-    assert_eq!(
-        review.opinion,
-        "The business model is clearly documented."
-    );
+    assert_eq!(review.opinion, "The business model is clearly documented.");
 
     assert_eq!(review.evidence.len(), 1);
     assert_eq!(review.evidence[0].id, "mat-doc-business");
@@ -1255,8 +1251,7 @@ async fn save_review_updates_existing_review_and_replaces_evidence() {
     let response = result.expect("save_review update should succeed");
 
     let result: types::SaveReviewResponse =
-        serde_json::from_value(response.result)
-            .expect("response should deserialize");
+        serde_json::from_value(response.result).expect("response should deserialize");
 
     let review = result.review;
 
@@ -1448,19 +1443,15 @@ async fn save_review_rolls_back_review_and_evidence_on_database_failure() {
     assert!(result.is_err());
 
     // temporary trigger removed before inspecting the final state.
-    sqlx::query(&format!(
-        "DROP TRIGGER {trigger_name} ON reviews"
-    ))
-    .execute(&pool)
-    .await
-    .expect("failed to remove rollback test trigger");
+    sqlx::query(&format!("DROP TRIGGER {trigger_name} ON reviews"))
+        .execute(&pool)
+        .await
+        .expect("failed to remove rollback test trigger");
 
-    sqlx::query(&format!(
-        "DROP FUNCTION {trigger_function}()"
-    ))
-    .execute(&pool)
-    .await
-    .expect("failed to remove rollback test function");
+    sqlx::query(&format!("DROP FUNCTION {trigger_function}()"))
+        .execute(&pool)
+        .await
+        .expect("failed to remove rollback test function");
 
     // The original review still exist unchanged.
     let review_row = sqlx::query_as::<_, (String, String, String)>(
@@ -1489,10 +1480,7 @@ async fn save_review_rolls_back_review_and_evidence_on_database_failure() {
     .await
     .expect("failed to fetch original evidence");
 
-    assert_eq!(
-        evidence_ids,
-        vec![("mat-doc-business".to_string(),)]
-    );
+    assert_eq!(evidence_ids, vec![("mat-doc-business".to_string(),)]);
 
     // attempted replacement evidence was not persisted...
     let replacement_count = sqlx::query_scalar::<_, i64>(
@@ -1648,13 +1636,13 @@ async fn save_review_handles_concurrent_saves_for_same_criterion() {
     .expect("failed to fetch concurrent evidence");
 
     assert_eq!(
-        evidence_rows.len(), 1,
+        evidence_rows.len(),
+        1,
         "final evidence count must be exactly 1"
     );
 
     assert!(
-        evidence_rows[0].0 == "mat-doc-business"
-            || evidence_rows[0].0 == "mat-doc-team",
+        evidence_rows[0].0 == "mat-doc-business" || evidence_rows[0].0 == "mat-doc-team",
         "final evidence must come from one of the concurrent saves"
     );
 

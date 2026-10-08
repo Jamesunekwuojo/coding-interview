@@ -246,4 +246,3 @@ async fn register_material(
 
 #[cfg(test)]
 mod tests;
-
